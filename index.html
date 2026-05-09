@@ -1,0 +1,1728 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <title>Лёня AI Tutor</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap');
+
+    :root {
+      --bg-1: #09121f;
+      --bg-2: #10243d;
+      --panel: rgba(12, 21, 36, 0.78);
+      --panel-strong: rgba(16, 29, 49, 0.94);
+      --line: rgba(255, 255, 255, 0.10);
+      --text: #f5f7fb;
+      --muted: rgba(245, 247, 251, 0.70);
+      --accent: #70e0a2;
+      --accent-2: #62c3ff;
+      --danger: #ff7373;
+      --warning: #ffc65b;
+      --premium: #f8d66d;
+      --shadow: 0 24px 60px rgba(3, 8, 15, 0.38);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      min-height: 100vh;
+      font-family: "Manrope", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(98, 195, 255, 0.18), transparent 30%),
+        radial-gradient(circle at top right, rgba(112, 224, 162, 0.16), transparent 26%),
+        linear-gradient(145deg, var(--bg-1), var(--bg-2));
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      background:
+        linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+      background-size: 28px 28px;
+      mask-image: radial-gradient(circle at center, black 45%, transparent 100%);
+      pointer-events: none;
+      opacity: 0.35;
+    }
+
+    #registerScreen,
+    #mainApp {
+      position: relative;
+      z-index: 1;
+    }
+
+    #registerScreen {
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 28px;
+    }
+
+    .hero-card,
+    .status-card,
+    .chat-shell {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(16px);
+    }
+
+    .hero-card {
+      width: min(560px, 100%);
+      border-radius: 32px;
+      padding: 32px;
+      animation: rise 0.7s ease;
+    }
+
+    @keyframes rise {
+      from {
+        opacity: 0;
+        transform: translateY(24px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 18px;
+    }
+
+    .hero-title {
+      font-size: clamp(34px, 7vw, 56px);
+      line-height: 0.96;
+      letter-spacing: -0.04em;
+      margin-bottom: 14px;
+    }
+
+    .hero-copy {
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.6;
+      margin-bottom: 28px;
+      max-width: 48ch;
+    }
+
+    .input-field {
+      width: 100%;
+      padding: 18px 20px;
+      border-radius: 18px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text);
+      font-size: 17px;
+      outline: none;
+      transition: border-color 0.2s ease, transform 0.2s ease;
+    }
+
+    .input-field:focus {
+      border-color: rgba(112, 224, 162, 0.8);
+      transform: translateY(-1px);
+    }
+
+    .input-field::placeholder {
+      color: rgba(245, 247, 251, 0.48);
+    }
+
+    .input-field:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .radio-group,
+    .nav {
+      display: grid;
+      gap: 12px;
+    }
+
+    .radio-group {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      margin: 18px 0 12px;
+    }
+
+    .radio-group label,
+    .plan-card {
+      border: 1px solid var(--line);
+      border-radius: 22px;
+      background: rgba(255, 255, 255, 0.04);
+      transition: transform 0.24s ease, border-color 0.24s ease, background 0.24s ease;
+    }
+
+    .radio-group label {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      padding: 18px;
+      cursor: pointer;
+    }
+
+    .radio-group label.selected,
+    .plan-card.selected {
+      border-color: rgba(112, 224, 162, 0.78);
+      background: rgba(112, 224, 162, 0.12);
+      transform: translateY(-2px);
+    }
+
+    .radio-group label:hover,
+    .plan-card:hover,
+    .btn:hover,
+    .voice-btn:hover,
+    .start-session-btn:hover {
+      transform: translateY(-2px);
+    }
+
+    .radio-group input {
+      display: none;
+    }
+
+    .option-title {
+      font-size: 17px;
+      font-weight: 800;
+    }
+
+    .option-copy {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.45;
+    }
+
+    .btn,
+    .start-session-btn {
+      width: 100%;
+      border: none;
+      border-radius: 18px;
+      cursor: pointer;
+      transition: transform 0.24s ease, opacity 0.24s ease, box-shadow 0.24s ease;
+      font-family: inherit;
+      font-weight: 800;
+    }
+
+    .btn {
+      padding: 18px 22px;
+      color: #0b1727;
+      background: linear-gradient(135deg, var(--accent), #9bf3bf);
+      box-shadow: 0 16px 32px rgba(112, 224, 162, 0.24);
+    }
+
+    .btn:disabled,
+    .start-session-btn:disabled,
+    .voice-btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: none;
+    }
+
+    .helper-line,
+    .login-link,
+    .error-message {
+      margin-top: 14px;
+      font-size: 14px;
+    }
+
+    .helper-line,
+    .login-link {
+      color: var(--muted);
+    }
+
+    .login-link {
+      cursor: pointer;
+      text-decoration: underline;
+      text-underline-offset: 3px;
+    }
+
+    .error-message {
+      color: #ffb0b0;
+      min-height: 20px;
+    }
+
+    #mainApp {
+      display: none;
+      min-height: 100vh;
+      padding: 18px;
+    }
+
+    .app-shell {
+      width: min(1180px, 100%);
+      margin: 0 auto;
+      display: grid;
+      gap: 18px;
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      padding: 20px 22px;
+      border-radius: 26px;
+      background: var(--panel-strong);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(16px);
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+    }
+
+    .brand-mark {
+      width: 52px;
+      height: 52px;
+      border-radius: 18px;
+      display: grid;
+      place-items: center;
+      background: linear-gradient(135deg, rgba(112, 224, 162, 0.24), rgba(98, 195, 255, 0.26));
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      font-size: 24px;
+    }
+
+    .brand h1 {
+      font-size: clamp(20px, 3vw, 28px);
+      letter-spacing: -0.03em;
+    }
+
+    .ghost-btn {
+      padding: 12px 16px;
+      border-radius: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text);
+      cursor: pointer;
+      font-family: inherit;
+      font-weight: 700;
+    }
+
+    .nav {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      padding: 8px;
+      border-radius: 24px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--line);
+      width: min(560px, 100%);
+    }
+
+    .nav button {
+      border: none;
+      border-radius: 18px;
+      background: transparent;
+      color: var(--muted);
+      font-weight: 800;
+      padding: 14px 12px;
+      cursor: pointer;
+      font-family: inherit;
+      transition: background 0.22s ease, color 0.22s ease;
+    }
+
+    .nav button.active {
+      background: linear-gradient(135deg, rgba(112, 224, 162, 0.18), rgba(98, 195, 255, 0.18));
+      color: var(--text);
+    }
+
+    .screen {
+      display: none;
+    }
+
+    .screen.active {
+      display: block;
+      animation: fadeIn 0.28s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .chat-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.6fr) minmax(300px, 0.9fr);
+      gap: 18px;
+    }
+
+    .chat-shell {
+      border-radius: 30px;
+      padding: 18px;
+    }
+
+    .session-bar,
+    .voice-panel,
+    .status-card {
+      border-radius: 28px;
+      padding: 22px;
+    }
+
+    .session-bar {
+      margin-bottom: 16px;
+      background: linear-gradient(145deg, rgba(112, 224, 162, 0.12), rgba(98, 195, 255, 0.10));
+      border: 1px solid var(--line);
+    }
+
+    .session-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .timer {
+      font-size: clamp(36px, 8vw, 54px);
+      line-height: 1;
+      letter-spacing: -0.05em;
+      margin-bottom: 14px;
+    }
+
+    .progress-bar {
+      width: 100%;
+      height: 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.10);
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent), var(--accent-2));
+      transition: width 0.8s linear;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 7px 12px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .badge-success {
+      background: rgba(112, 224, 162, 0.18);
+      color: #baf6d1;
+    }
+
+    .badge-danger {
+      background: rgba(255, 115, 115, 0.16);
+      color: #ffd0d0;
+    }
+
+    .badge-warning {
+      background: rgba(255, 198, 91, 0.18);
+      color: #ffe0a1;
+    }
+
+    .badge-premium {
+      background: rgba(248, 214, 109, 0.20);
+      color: #fff0b0;
+    }
+
+    .chat-window {
+      height: 420px;
+      overflow-y: auto;
+      padding-right: 6px;
+    }
+
+    .chat-window::-webkit-scrollbar {
+      width: 10px;
+    }
+
+    .chat-window::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.14);
+      border-radius: 999px;
+    }
+
+    .message {
+      width: fit-content;
+      max-width: min(82%, 700px);
+      margin: 14px 0;
+      padding: 16px 18px;
+      border-radius: 22px;
+      line-height: 1.55;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.14);
+      animation: bubble 0.24s ease;
+    }
+
+    @keyframes bubble {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .user-msg {
+      margin-left: auto;
+      background: linear-gradient(135deg, #1a7f5a, #2ba074);
+    }
+
+    .bot-msg {
+      background: linear-gradient(135deg, #174470, #23629a);
+    }
+
+    .voice-panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 18px;
+    }
+
+    .voice-btn {
+      width: 110px;
+      height: 110px;
+      margin: 10px auto;
+      border-radius: 50%;
+      border: none;
+      background: linear-gradient(135deg, #ff8a65, #ff5b3f);
+      color: white;
+      font-size: 44px;
+      cursor: pointer;
+      box-shadow: 0 18px 38px rgba(255, 91, 63, 0.28);
+      transition: transform 0.24s ease, box-shadow 0.24s ease, opacity 0.24s ease;
+    }
+
+    .voice-btn.recording {
+      background: linear-gradient(135deg, #ff5b5b, #ff2f67);
+      animation: pulse 1.5s infinite;
+    }
+
+    .voice-btn.playing {
+      background: linear-gradient(135deg, #69a2ff, #4d7df3);
+      box-shadow: 0 18px 38px rgba(77, 125, 243, 0.24);
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.08); }
+    }
+
+    .voice-hint {
+      text-align: center;
+      color: var(--muted);
+      line-height: 1.55;
+      min-height: 48px;
+    }
+
+    .composer {
+      margin-top: 18px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .composer textarea {
+      width: 100%;
+      min-height: 112px;
+      resize: vertical;
+      padding: 16px 18px;
+      border-radius: 18px;
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text);
+      font: inherit;
+      line-height: 1.5;
+      outline: none;
+    }
+
+    .composer textarea:focus {
+      border-color: rgba(98, 195, 255, 0.72);
+    }
+
+    .composer textarea:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .composer-actions {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .secondary-btn {
+      flex: 1;
+      min-width: 180px;
+      padding: 14px 16px;
+      border-radius: 16px;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text);
+      cursor: pointer;
+      font-family: inherit;
+      font-weight: 700;
+      transition: transform 0.24s ease, opacity 0.24s ease, border-color 0.24s ease;
+    }
+
+    .secondary-btn:hover {
+      transform: translateY(-2px);
+      border-color: rgba(98, 195, 255, 0.45);
+    }
+
+    .secondary-btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    .start-session-btn {
+      padding: 18px 22px;
+      color: #0c1828;
+      background: linear-gradient(135deg, #9bf3bf, var(--accent));
+      box-shadow: 0 16px 32px rgba(112, 224, 162, 0.22);
+    }
+
+    .status-grid,
+    .payment-grid {
+      display: grid;
+      gap: 18px;
+    }
+
+    .status-card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      box-shadow: var(--shadow);
+    }
+
+    .status-card h2 {
+      margin-bottom: 18px;
+      font-size: clamp(24px, 4vw, 34px);
+      letter-spacing: -0.03em;
+    }
+
+    #statusContent p {
+      margin: 12px 0;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .plan-card {
+      padding: 24px;
+      cursor: pointer;
+    }
+
+    .plan-card.premium.selected {
+      border-color: rgba(248, 214, 109, 0.78);
+      background: rgba(248, 214, 109, 0.10);
+    }
+
+    .price {
+      font-size: clamp(34px, 6vw, 46px);
+      font-weight: 800;
+      margin: 10px 0 14px;
+      letter-spacing: -0.04em;
+    }
+
+    .price small {
+      font-size: 16px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .plan-list {
+      list-style: none;
+      display: grid;
+      gap: 10px;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .payment-note {
+      color: var(--muted);
+      text-align: center;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    @media (max-width: 980px) {
+      .chat-layout {
+        grid-template-columns: 1fr;
+      }
+
+      .chat-window {
+        height: 360px;
+      }
+    }
+
+    @media (max-width: 720px) {
+      #mainApp {
+        padding: 14px;
+      }
+
+      .hero-card,
+      .status-card,
+      .voice-panel,
+      .chat-shell,
+      .header {
+        border-radius: 24px;
+      }
+
+      .header {
+        flex-direction: column;
+        align-items: stretch;
+      }
+
+      .nav,
+      .radio-group {
+        grid-template-columns: 1fr;
+      }
+
+      .voice-btn {
+        width: 96px;
+        height: 96px;
+        font-size: 38px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div id="registerScreen">
+    <div class="hero-card">
+      <div class="eyebrow">🎧 Голосовой репетитор с подпиской и живыми занятиями</div>
+      <h1 class="hero-title">Лёня помогает учиться без скучной зубрёшки</h1>
+      <p class="hero-copy">
+        5 полноценных занятий в месяц, таймер живой сессии, голосовой режим и тарифы под разную глубину ответов.
+      </p>
+
+      <input id="regName" class="input-field" placeholder="Как тебя зовут?" maxlength="30">
+
+      <input id="regPassword" class="input-field" type="password" placeholder="Придумайте пароль" maxlength="128" style="margin-top: 12px;">
+
+      <div class="radio-group">
+        <label id="planBasicLabel" class="selected">
+          <input type="radio" name="plan" value="basic" checked>
+          <span class="option-title">💎 Basic — 300 ₽</span>
+          <span class="option-copy">GPT OSS 120B, 5 занятий по 2 часа</span>
+        </label>
+        <label id="planPremiumLabel">
+          <input type="radio" name="plan" value="premium">
+          <span class="option-title">👑 Premium — 500 ₽</span>
+          <span class="option-copy">DeepSeek V3.1, 5 занятий по 2 часа</span>
+        </label>
+      </div>
+
+      <button class="btn" onclick="registerUser()">📝 Зарегистрироваться</button>
+      <div class="helper-line">После входа можно сразу перейти к оплате и старту занятия.</div>
+      <div class="login-link" onclick="showLoginPrompt()">🔑 У меня уже есть аккаунт</div>
+      <div id="registerError" class="error-message"></div>
+    </div>
+  </div>
+
+  <div id="mainApp">
+    <div class="app-shell">
+      <div class="header">
+        <div class="brand">
+          <div class="brand-mark">🎤</div>
+          <div>
+            <h1>Лёня AI Tutor</h1>
+            <div style="color: var(--muted); font-size: 14px;">Голосовые занятия, подписка и контроль времени</div>
+          </div>
+          <span id="userPlanBadge" class="badge badge-success" style="margin-left: 6px;"></span>
+        </div>
+        <button class="ghost-btn" onclick="logout()">🚪 Выйти</button>
+      </div>
+
+      <div class="nav">
+        <button onclick="showScreen(0)" id="navChat" class="active">💬 Чат</button>
+        <button onclick="showScreen(1)" id="navStatus">📊 Статус</button>
+        <button onclick="showScreen(2)" id="navPayment">💳 Оплата</button>
+      </div>
+
+      <div id="screen0" class="screen active">
+        <div class="chat-layout">
+          <div class="chat-shell">
+            <div id="sessionInfo" class="session-bar">
+              <div class="session-top">
+                <span><span id="sessionsUsed">0</span>/<span id="sessionsTotal">5</span> занятий</span>
+                <span id="subscriptionBadge" class="badge badge-warning">Нет подписки</span>
+              </div>
+              <div id="timerDisplay" class="timer">--:--</div>
+              <div class="progress-bar">
+                <div id="sessionProgress" class="progress-fill"></div>
+              </div>
+            </div>
+
+            <div class="chat-window" id="chatWindow">
+              <div class="message bot-msg">
+                <strong>🤖 Лёня:</strong>
+                <div style="margin-top: 8px;">Привет! Оплатите подписку и нажмите «Начать занятие», чтобы включить голосовой режим.</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="voice-panel">
+            <div>
+              <button id="startSessionBtn" class="start-session-btn" onclick="startSession()">🎯 Начать занятие</button>
+              <button id="voiceBtn" class="voice-btn" onclick="toggleVoiceInput()" disabled>🎤</button>
+              <div id="statusText" class="voice-hint">⚠️ Сначала оплатите подписку</div>
+
+              <div class="composer">
+                <textarea id="manualInput" placeholder="Можно писать сюда вручную, если не хочется говорить или микрофон капризничает." disabled></textarea>
+                <div class="composer-actions">
+                  <button id="enableMicBtn" class="secondary-btn" onclick="initializeMicrophone()" disabled>🎙️ Подключить микрофон один раз</button>
+                  <button id="manualSendBtn" class="btn" onclick="sendManualMessage()" disabled>✍️ Отправить вопрос</button>
+                </div>
+              </div>
+            </div>
+
+            <div style="color: var(--muted); line-height: 1.6; font-size: 14px;">
+              Микрофон подключается один раз за сессию. Если голосовой ввод ведёт себя нестабильно, можно спокойно продолжить через текстовую панель.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div id="screen1" class="screen">
+        <div class="status-grid">
+          <div class="status-card">
+            <h2>Статус подписки</h2>
+            <div id="statusContent"><p>Загрузка...</p></div>
+          </div>
+        </div>
+      </div>
+
+      <div id="screen2" class="screen">
+        <div class="payment-grid">
+          <div class="status-card">
+            <h2 style="text-align:center;">Выберите тариф</h2>
+
+            <div class="plan-card selected" onclick="selectPlan('basic')" id="planBasic">
+              <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap;">
+                <h3>💎 Basic</h3>
+                <span class="badge badge-success">GPT OSS 120B</span>
+              </div>
+              <div class="price">300 <small>₽ / месяц</small></div>
+              <ul class="plan-list">
+                <li>✅ 5 занятий по 2 часа</li>
+                <li>✅ Серверный TTS-голос</li>
+                <li>✅ Подходит для регулярной практики</li>
+              </ul>
+            </div>
+
+            <div class="plan-card premium" onclick="selectPlan('premium')" id="planPremiumCard" style="margin-top:18px;">
+              <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap;">
+                <h3>👑 Premium</h3>
+                <span class="badge badge-premium">DeepSeek V3.1</span>
+              </div>
+              <div class="price">500 <small>₽ / месяц</small></div>
+              <ul class="plan-list">
+                <li>✅ 5 занятий по 2 часа</li>
+                <li>✅ Более сильная модель для сложных тем</li>
+                <li>✅ Серверный TTS-голос</li>
+              </ul>
+            </div>
+
+            <button id="payButton" class="btn" style="margin-top:20px;" onclick="createPayment()">💳 Оплатить подписку</button>
+            <p class="payment-note">После оплаты статус обновится автоматически. Если вы в тестовом режиме, страница активации откроется в новой вкладке.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const SERVER_URL = window.location.origin.startsWith("http")
+      ? window.location.origin
+      : "http://127.0.0.1:8000";
+    const SESSION_DURATION = 120;
+    const STORAGE_KEYS = {
+      name: "lenya_user_name",
+      apiKey: "lenya_user_api_key",
+      plan: "lenya_user_plan",
+      paymentId: "last_payment_id"
+    };
+
+    const state = {
+      userName: "",
+      userApiKey: "",
+      userPlan: "basic",
+      selectedPlan: "basic",
+      supportsSpeechRecognition: Boolean(window.SpeechRecognition || window.webkitSpeechRecognition),
+      isPlaying: false,
+      isRecognizing: false,
+      micReady: false,
+      micStream: null,
+      recognition: null,
+      recognitionReceivedResult: false,
+      recognitionStopRequested: false,
+      sessionTimer: null,
+      currentAudio: null,
+      paymentPollTimer: null,
+      // Новые поля для управления TTS
+      currentTtsId: null,
+      isTtsPlaying: false,
+      pendingRequest: null,
+      pendingTtsQueue: []
+    };
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    async function apiFetch(path, options = {}) {
+      const headers = new Headers(options.headers || {});
+      if (!headers.has("Content-Type") && options.body && !(options.body instanceof FormData)) {
+        headers.set("Content-Type", "application/json");
+      }
+      if (state.userApiKey && !headers.has("X-API-Key")) {
+        headers.set("X-API-Key", state.userApiKey);
+      }
+
+      const response = await fetch(`${SERVER_URL}${path}`, {
+        ...options,
+        headers
+      });
+
+      let payload = null;
+      const contentType = response.headers.get("content-type") || "";
+      if (contentType.includes("application/json")) {
+        payload = await response.json();
+      } else if (!response.ok) {
+        payload = { detail: await response.text() };
+      }
+
+      if (!response.ok) {
+        const error = new Error(payload?.detail || "Ошибка запроса");
+        error.status = response.status;
+        error.payload = payload;
+        throw error;
+      }
+
+      return payload;
+    }
+
+    function addMessage(text, isUser) {
+      const chat = document.getElementById("chatWindow");
+      const message = document.createElement("div");
+      message.className = `message ${isUser ? "user-msg" : "bot-msg"}`;
+      message.style.whiteSpace = "pre-wrap";
+
+      const author = document.createElement("strong");
+      author.textContent = isUser ? "👤 Ты:" : "🤖 Лёня:";
+
+      const body = document.createElement("div");
+      body.textContent = text;
+      body.style.marginTop = "8px";
+
+      message.appendChild(author);
+      message.appendChild(body);
+      chat.appendChild(message);
+      chat.scrollTop = chat.scrollHeight;
+      return message;
+    }
+
+    function setPlanBadge(plan) {
+      const badge = document.getElementById("userPlanBadge");
+      badge.className = `badge ${plan === "premium" ? "badge-premium" : "badge-success"}`;
+      badge.textContent = plan.toUpperCase();
+    }
+
+    function setVoiceButtonState(mode = "idle") {
+      const btn = document.getElementById("voiceBtn");
+      btn.classList.remove("recording", "playing");
+      btn.textContent = "🎤";
+
+      if (mode === "recording") {
+        btn.classList.add("recording");
+        btn.textContent = "⏹️";
+      }
+      if (mode === "playing") {
+        btn.classList.add("playing");
+      }
+    }
+
+    function setStatusText(text) {
+      document.getElementById("statusText").textContent = text;
+    }
+
+    function setControlsEnabled(enabled) {
+      const voiceBtn = document.getElementById("voiceBtn");
+      const manualSendBtn = document.getElementById("manualSendBtn");
+      const manualInput = document.getElementById("manualInput");
+      const enableMicBtn = document.getElementById("enableMicBtn");
+
+      if (enabled) {
+        voiceBtn.disabled = false;
+        manualSendBtn.disabled = false;
+        manualInput.disabled = false;
+        enableMicBtn.disabled = false;
+      } else {
+        voiceBtn.disabled = true;
+        manualSendBtn.disabled = true;
+        manualInput.disabled = true;
+        enableMicBtn.disabled = true;
+      }
+    }
+
+    function syncMicButton() {
+      const micButton = document.getElementById("enableMicBtn");
+      micButton.textContent = state.micReady
+        ? "✅ Микрофон подключён"
+        : "🎙️ Подключить микрофон один раз";
+    }
+
+    function saveSession() {
+      localStorage.setItem(STORAGE_KEYS.name, state.userName);
+      localStorage.setItem(STORAGE_KEYS.apiKey, state.userApiKey);
+      localStorage.setItem(STORAGE_KEYS.plan, state.userPlan);
+    }
+
+    function clearSessionStorage() {
+      Object.values(STORAGE_KEYS).forEach((key) => localStorage.removeItem(key));
+    }
+
+    function stopAudioPlayback() {
+      if (state.currentAudio) {
+        const url = state.currentAudio.src;
+        state.currentAudio.pause();
+        state.currentAudio = null;
+        if (url.startsWith("blob:")) {
+          URL.revokeObjectURL(url);
+        }
+      }
+      speechSynthesis.cancel();
+      state.isPlaying = false;
+      state.isTtsPlaying = false;
+      setVoiceButtonState("idle");
+    }
+
+    async function initializeMicrophone() {
+      if (state.micReady && state.micStream) {
+        syncMicButton();
+        setStatusText("✅ Микрофон уже подключён");
+        return true;
+      }
+
+      try {
+        state.micStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true
+          }
+        });
+        state.micReady = true;
+        syncMicButton();
+        setStatusText("✅ Микрофон подключён. Разрешение больше не должно всплывать в этой сессии.");
+        return true;
+      } catch (error) {
+        console.error("Mic init error:", error);
+        state.micReady = false;
+        syncMicButton();
+        setStatusText("⚠️ Микрофон не подключился. Можно продолжить текстом.");
+        addMessage("⚠️ Не удалось подключить микрофон. Для надёжности можно писать вопросы вручную.", false);
+        return false;
+      }
+    }
+
+    async function markTtsComplete(ttsId) {
+      if (!ttsId) return;
+      try {
+        await fetch(`${SERVER_URL}/tts/complete/${ttsId}`, {
+          method: "POST"
+        });
+      } catch (e) {
+        console.error("Failed to mark TTS complete:", e);
+      }
+    }
+
+    async function playVoiceResponse(text, ttsId = null) {
+      if (!text) return;
+
+      // Если уже воспроизводится TTS, добавляем в очередь
+      if (state.isTtsPlaying && state.currentAudio) {
+        state.pendingTtsQueue.push({ text, ttsId });
+        return;
+      }
+
+      await playTtsInternal(text, ttsId);
+    }
+
+    async function playTtsInternal(text, ttsId) {
+      state.isTtsPlaying = true;
+      state.isPlaying = true;
+      setVoiceButtonState("playing");
+      setControlsEnabled(false);
+      setStatusText("🔊 Лёня отвечает... (дождитесь окончания)");
+
+      try {
+        const response = await fetch(`${SERVER_URL}/tts`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text, voice: "ru-RU-DmitryNeural" })
+        });
+
+        if (!response.ok) {
+          throw new Error("TTS error");
+        }
+
+        const responseTtsId = response.headers.get("X-TTS-ID") || ttsId;
+        state.currentTtsId = responseTtsId;
+
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        state.currentAudio = audio;
+
+        audio.onended = async () => {
+          URL.revokeObjectURL(url);
+          state.currentAudio = null;
+          state.isTtsPlaying = false;
+          state.isPlaying = false;
+          state.currentTtsId = null;
+
+          await markTtsComplete(responseTtsId);
+
+          // Разблокируем управление
+          setControlsEnabled(true);
+          setVoiceButtonState("idle");
+          setStatusText("✅ Можно задать следующий вопрос");
+
+          // Обрабатываем следующий TTS в очереди
+          if (state.pendingTtsQueue.length > 0) {
+            const nextTts = state.pendingTtsQueue.shift();
+            await playTtsInternal(nextTts.text, nextTts.ttsId);
+          } else if (state.pendingRequest) {
+            // Обрабатываем отложенный запрос
+            const pendingText = state.pendingRequest;
+            state.pendingRequest = null;
+            await processAIRequest(pendingText);
+          }
+        };
+
+        audio.onerror = async () => {
+          URL.revokeObjectURL(url);
+          state.currentAudio = null;
+          state.isTtsPlaying = false;
+          state.isPlaying = false;
+          state.currentTtsId = null;
+
+          setControlsEnabled(true);
+          setVoiceButtonState("idle");
+          setStatusText("⚠️ Ошибка воспроизведения. Можно задать следующий вопрос.");
+          addMessage("❌ Ошибка воспроизведения голоса.", false);
+        };
+
+        await audio.play();
+      } catch (error) {
+        console.error("TTS error:", error);
+        
+        // Fallback на браузерный TTS
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = "ru-RU";
+        
+        utterance.onend = async () => {
+          state.isTtsPlaying = false;
+          state.isPlaying = false;
+          setControlsEnabled(true);
+          setVoiceButtonState("idle");
+          setStatusText("✅ Можно задать следующий вопрос");
+
+          if (state.pendingTtsQueue.length > 0) {
+            const nextTts = state.pendingTtsQueue.shift();
+            await playTtsInternal(nextTts.text, nextTts.ttsId);
+          } else if (state.pendingRequest) {
+            const pendingText = state.pendingRequest;
+            state.pendingRequest = null;
+            await processAIRequest(pendingText);
+          }
+        };
+        
+        utterance.onerror = () => {
+          state.isTtsPlaying = false;
+          state.isPlaying = false;
+          setControlsEnabled(true);
+          setVoiceButtonState("idle");
+          setStatusText("✅ Можно задать следующий вопрос");
+        };
+        
+        speechSynthesis.speak(utterance);
+      }
+    }
+
+    async function sendToAI(prompt) {
+      const data = await apiFetch("/chat", {
+        method: "POST",
+        body: JSON.stringify({
+          messages: [{ role: "user", content: prompt }],
+          tts_id: state.currentTtsId
+        })
+      });
+      return data;
+    }
+
+    async function processAIRequest(text) {
+      if (state.isTtsPlaying) {
+        state.pendingRequest = text;
+        setStatusText("⏳ Вопрос сохранён. Будет обработан после ответа Лёни.");
+        return;
+      }
+
+      const cleanedText = text.trim();
+      if (!cleanedText) return;
+
+      addMessage(cleanedText, true);
+      const thinkingMessage = addMessage("🤔 Думаю...", false);
+
+      try {
+        const data = await sendToAI(cleanedText);
+        thinkingMessage.remove();
+        addMessage(data.response, false);
+        await checkSessionStatus();
+        await playVoiceResponse(data.response, data.tts_id);
+      } catch (error) {
+        thinkingMessage.remove();
+        addMessage(`❌ ${error.message}`, false);
+        console.error("AI error:", error);
+      }
+    }
+
+    async function askAI(text) {
+      if (state.isTtsPlaying) {
+        state.pendingRequest = text;
+        setStatusText("⏳ Вопрос сохранён. Будет обработан после ответа Лёни.");
+        return;
+      }
+
+      await processAIRequest(text);
+    }
+
+    async function sendManualMessage() {
+      const input = document.getElementById("manualInput");
+      const button = document.getElementById("manualSendBtn");
+      const text = input.value.trim();
+
+      if (!text) {
+        input.focus();
+        return;
+      }
+
+      if (state.isTtsPlaying) {
+        setStatusText("⏳ Дождитесь окончания ответа Лёни перед отправкой нового вопроса.");
+        return;
+      }
+
+      button.disabled = true;
+      try {
+        input.value = "";
+        await askAI(text);
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    function createRecognition() {
+      const SpeechRecognitionClass = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognitionClass) {
+        return null;
+      }
+
+      const recognition = new SpeechRecognitionClass();
+      recognition.lang = "ru-RU";
+      recognition.interimResults = false;
+      recognition.continuous = false;
+      recognition.maxAlternatives = 1;
+
+      recognition.onresult = async (event) => {
+        state.recognitionReceivedResult = true;
+        const text = event.results?.[0]?.[0]?.transcript?.trim() || "";
+        state.isRecognizing = false;
+        setVoiceButtonState("idle");
+
+        if (text.length < 2) {
+          addMessage("❌ Не удалось распознать речь. Попробуй ещё раз.", false);
+          return;
+        }
+
+        setStatusText("✅ Можно говорить снова");
+        await askAI(text);
+      };
+
+      recognition.onerror = (event) => {
+        state.isRecognizing = false;
+        setVoiceButtonState("idle");
+        if (state.recognitionStopRequested) {
+          state.recognitionStopRequested = false;
+          setStatusText("✅ Запись остановлена");
+          return;
+        }
+        setStatusText("❌ Голос не распознан");
+        if (event.error !== "aborted" && event.error !== "no-speech") {
+          addMessage("❌ Ошибка распознавания речи. Попробуй говорить чуть чётче.", false);
+        }
+      };
+
+      recognition.onend = () => {
+        const stoppedByUser = state.recognitionStopRequested;
+        state.recognitionStopRequested = false;
+        state.isRecognizing = false;
+        setVoiceButtonState("idle");
+        if (stoppedByUser) {
+          setStatusText("✅ Запись остановлена");
+        }
+      };
+
+      return recognition;
+    }
+
+    async function toggleVoiceInput() {
+      if (state.isPlaying || state.isTtsPlaying) {
+        stopAudioPlayback();
+        state.pendingTtsQueue = [];
+        state.pendingRequest = null;
+        setControlsEnabled(true);
+        setStatusText("✅ Воспроизведение остановлено. Можно задать вопрос.");
+        return;
+      }
+
+      if (!state.isRecognizing) {
+        const micReady = await initializeMicrophone();
+        if (!micReady) {
+          return;
+        }
+
+        const recognition = state.recognition || createRecognition();
+        if (!recognition) {
+          setStatusText("⚠️ Голосовой ввод в этом браузере недоступен. Используйте текстовую панель.");
+          return;
+        }
+
+        state.recognition = recognition;
+        state.recognitionReceivedResult = false;
+        state.isRecognizing = true;
+        state.recognitionStopRequested = false;
+        setVoiceButtonState("recording");
+        setStatusText("🎙️ Слушаю вас...");
+        recognition.start();
+        return;
+      }
+
+      if (state.recognition) {
+        state.recognitionStopRequested = true;
+        state.recognition.stop();
+      }
+      state.isRecognizing = false;
+      setVoiceButtonState("idle");
+      setStatusText("✅ Запись остановлена");
+    }
+
+    async function startSession() {
+      try {
+        const data = await apiFetch("/session/start", { method: "POST" });
+        document.getElementById("startSessionBtn").disabled = true;
+        document.getElementById("voiceBtn").disabled = false;
+        setControlsEnabled(true);
+        setStatusText("✅ Занятие активно. Нажмите на микрофон.");
+        startTimer(data.remaining_minutes || SESSION_DURATION);
+        addMessage("✅ Занятие началось! У вас есть два часа на работу с Лёней.", false);
+        await playVoiceResponse("Занятие началось. Можно задавать вопросы.");
+      } catch (error) {
+        alert(error.message || "Не удалось начать занятие");
+      }
+    }
+
+    function startTimer(minutes) {
+      const endTime = Date.now() + minutes * 60 * 1000;
+      if (state.sessionTimer) {
+        clearInterval(state.sessionTimer);
+      }
+
+      state.sessionTimer = setInterval(() => {
+        const remaining = Math.max(0, endTime - Date.now());
+        const mins = Math.floor(remaining / 60000);
+        const secs = Math.floor((remaining % 60000) / 1000);
+        document.getElementById("timerDisplay").textContent =
+          `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+
+        const percent = 100 - (remaining / (SESSION_DURATION * 60 * 1000)) * 100;
+        document.getElementById("sessionProgress").style.width = `${Math.min(100, percent)}%`;
+
+        if (remaining <= 0) {
+          clearInterval(state.sessionTimer);
+          state.sessionTimer = null;
+          endSession();
+        }
+      }, 1000);
+    }
+
+    async function endSession() {
+      document.getElementById("startSessionBtn").disabled = false;
+      document.getElementById("voiceBtn").disabled = true;
+      setControlsEnabled(false);
+      document.getElementById("timerDisplay").textContent = "00:00";
+      document.getElementById("sessionProgress").style.width = "100%";
+      setStatusText("⏰ Занятие завершено");
+      stopAudioPlayback();
+      addMessage("⏰ Занятие завершено. Можно начать новое, если остались занятия.", false);
+      await checkSessionStatus();
+    }
+
+    async function checkSessionStatus() {
+      if (!state.userApiKey) return null;
+
+      try {
+        const data = await apiFetch("/session/status", { headers: { "X-API-Key": state.userApiKey } });
+        document.getElementById("sessionsUsed").textContent = data.sessions_used || 0;
+        document.getElementById("sessionsTotal").textContent = 5;
+
+        const badge = document.getElementById("subscriptionBadge");
+        const startButton = document.getElementById("startSessionBtn");
+        const voiceButton = document.getElementById("voiceBtn");
+
+        if (data.has_subscription) {
+          badge.className = "badge badge-success";
+          badge.textContent = `✅ ${(data.plan || "").toUpperCase()}`;
+          startButton.disabled = data.session_active || (data.sessions_left || 0) <= 0;
+          voiceButton.disabled = !data.session_active;
+          setControlsEnabled(data.session_active);
+
+          if (data.session_active && Number.isFinite(data.remaining_minutes)) {
+            startTimer(data.remaining_minutes);
+            setStatusText(state.isTtsPlaying ? "🔊 Лёня отвечает..." : "✅ Занятие активно. Нажмите на микрофон.");
+          } else if ((data.sessions_left || 0) > 0) {
+            document.getElementById("timerDisplay").textContent = "--:--";
+            document.getElementById("sessionProgress").style.width = "0%";
+            setStatusText("✅ Всё готово к занятию");
+          } else {
+            setStatusText("❌ Лимит занятий исчерпан");
+          }
+        } else {
+          badge.className = "badge badge-danger";
+          badge.textContent = "❌ Нет подписки";
+          startButton.disabled = true;
+          voiceButton.disabled = true;
+          setControlsEnabled(false);
+          document.getElementById("timerDisplay").textContent = "--:--";
+          document.getElementById("sessionProgress").style.width = "0%";
+          setStatusText("⚠️ Сначала оплатите подписку");
+        }
+
+        return data;
+      } catch (error) {
+        console.error("Status error:", error);
+        return null;
+      }
+    }
+
+    function hydrateUser(data) {
+      state.userName = data.name;
+      state.userApiKey = data.user_api_key;
+      state.userPlan = data.plan;
+      saveSession();
+      setPlanBadge(state.userPlan);
+      document.getElementById("registerScreen").style.display = "none";
+      document.getElementById("mainApp").style.display = "block";
+    }
+
+    async function registerUser() {
+      const nameInput = document.getElementById("regName");
+      const passwordInput = document.getElementById("regPassword");
+      const errorDiv = document.getElementById("registerError");
+      const name = nameInput.value.trim().toUpperCase();
+      const password = passwordInput.value.trim();
+
+      if (name.length < 2) {
+        errorDiv.textContent = "❌ Введите имя минимум из 2 символов";
+        return;
+      }
+
+      if (password.length < 4) {
+        errorDiv.textContent = "❌ Введите пароль минимум из 4 символов";
+        return;
+      }
+
+      const plan = document.querySelector('input[name="plan"]:checked').value;
+      const button = document.querySelector("#registerScreen .btn");
+      const originalText = button.textContent;
+
+      button.disabled = true;
+      button.textContent = "⏳ Регистрация...";
+      errorDiv.textContent = "";
+
+      try {
+        const data = await apiFetch("/register", {
+          method: "POST",
+          body: JSON.stringify({ name, password, plan })
+        });
+        hydrateUser(data);
+        addMessage(`👋 Привет, ${state.userName}!`, false);
+        await checkSessionStatus();
+
+        if (!data.has_subscription) {
+          addMessage("💳 Выберите тариф и оплатите подписку, чтобы начать занятие.", false);
+          showScreen(2);
+        }
+      } catch (error) {
+        errorDiv.textContent = `❌ ${error.message}`;
+      } finally {
+        button.disabled = false;
+        button.textContent = originalText;
+      }
+    }
+
+    async function loginUser(name, password) {
+      const errorDiv = document.getElementById("registerError");
+      try {
+        const data = await apiFetch("/login", {
+          method: "POST",
+          body: JSON.stringify({ name: name.trim().toUpperCase(), password: password.trim() })
+        });
+        hydrateUser(data);
+        addMessage(`👋 С возвращением, ${state.userName}!`, false);
+        await checkSessionStatus();
+        if (!data.has_subscription) {
+          addMessage("💳 Подписка неактивна. Можно перейти к оплате.", false);
+          showScreen(2);
+        }
+      } catch (error) {
+        errorDiv.textContent = `❌ ${error.message}`;
+      }
+    }
+
+    function showLoginPrompt() {
+      const savedName = localStorage.getItem(STORAGE_KEYS.name);
+      const name = prompt("Введите имя для входа:", savedName || "");
+      if (!name) {
+        return;
+      }
+      const password = prompt("Введите пароль для входа:");
+      if (password) {
+        loginUser(name, password);
+      }
+    }
+
+    function selectPlan(plan) {
+      state.selectedPlan = plan;
+      document.querySelectorAll(".plan-card").forEach((card) => card.classList.remove("selected"));
+      document.getElementById(plan === "basic" ? "planBasic" : "planPremiumCard").classList.add("selected");
+    }
+
+    async function pollPaymentStatus() {
+      if (state.paymentPollTimer) {
+        clearInterval(state.paymentPollTimer);
+      }
+
+      let attempts = 0;
+      state.paymentPollTimer = setInterval(async () => {
+        attempts += 1;
+        const status = await checkSessionStatus();
+        if (status?.has_subscription) {
+          clearInterval(state.paymentPollTimer);
+          state.paymentPollTimer = null;
+          addMessage("✅ Подписка активировалась. Можно начинать занятие.", false);
+          showScreen(0);
+        }
+        if (attempts >= 12) {
+          clearInterval(state.paymentPollTimer);
+          state.paymentPollTimer = null;
+        }
+      }, 5000);
+    }
+
+    async function createPayment() {
+      const button = document.getElementById("payButton");
+      if (!state.userApiKey) {
+        alert("Сначала войдите в аккаунт.");
+        return;
+      }
+
+      button.disabled = true;
+      button.textContent = "⏳ Создание платежа...";
+
+      try {
+        const data = await apiFetch("/payment/create", {
+          method: "POST",
+          body: JSON.stringify({
+            user_api_key: state.userApiKey,
+            plan: state.selectedPlan
+          })
+        });
+
+        localStorage.setItem(STORAGE_KEYS.paymentId, data.payment_id);
+        if (data.confirmation_url) {
+          window.open(data.confirmation_url, "_blank", "noopener");
+        }
+
+        addMessage(`💳 Платёж на ${data.amount} ₽ создан. После оплаты вернитесь в приложение.`, false);
+        alert(data.test_mode
+          ? `Тестовый платёж на ${data.amount} ₽ создан. После подтверждения подписка активируется автоматически.`
+          : `Платёж на ${data.amount} ₽ создан. После оплаты подписка активируется автоматически.`);
+
+        await pollPaymentStatus();
+      } catch (error) {
+        console.error("Payment error:", error);
+        alert(`❌ ${error.message}`);
+        if (error.status === 401) {
+          showLoginPrompt();
+        }
+      } finally {
+        button.disabled = false;
+        button.textContent = "💳 Оплатить подписку";
+      }
+    }
+
+    function showScreen(index) {
+      document.querySelectorAll(".screen").forEach((screen, i) => {
+        screen.classList.toggle("active", i === index);
+      });
+      document.querySelectorAll(".nav button").forEach((button, i) => {
+        button.classList.toggle("active", i === index);
+      });
+
+      if (index === 1) {
+        loadStatus();
+      }
+      if (index === 0) {
+        checkSessionStatus();
+      }
+    }
+
+    async function loadStatus() {
+      try {
+        const data = await apiFetch("/status", { headers: { "X-API-Key": state.userApiKey } });
+        const subscriptionHtml = data.has_subscription
+          ? `<span style="color:#90f0ba;">✅ Активна до ${escapeHtml(new Date(data.subscription_end).toLocaleDateString())}</span>`
+          : '<span style="color:#ffb0b0;">❌ Не активна</span>';
+        const sessionHtml = data.current_session
+          ? `<p><strong>🎯 Текущее занятие:</strong> ${data.current_session.active ? "Активно" : "Завершено"}</p>`
+          : "";
+
+        document.getElementById("statusContent").innerHTML = `
+          <p><strong>👤 Имя:</strong> ${escapeHtml(data.name)}</p>
+          <p><strong>💎 Тариф:</strong> ${escapeHtml(data.plan.toUpperCase())}</p>
+          <p><strong>🤖 Модель:</strong> ${escapeHtml(data.model)}</p>
+          <p><strong>📅 Подписка:</strong> ${subscriptionHtml}</p>
+          <p><strong>📊 Занятий:</strong> ${escapeHtml(data.sessions_used)}/${escapeHtml(data.sessions_used + data.sessions_left)}</p>
+          <p><strong>💬 Всего вопросов:</strong> ${escapeHtml(data.total_questions)}</p>
+          ${sessionHtml}
+        `;
+      } catch (error) {
+        document.getElementById("statusContent").innerHTML = "<p>❌ Не удалось загрузить статус</p>";
+      }
+    }
+
+    function logout() {
+      stopAudioPlayback();
+      if (state.sessionTimer) {
+        clearInterval(state.sessionTimer);
+      }
+      if (state.paymentPollTimer) {
+        clearInterval(state.paymentPollTimer);
+      }
+      if (state.recognition) {
+        state.recognitionStopRequested = true;
+        state.recognition.stop();
+      }
+      if (state.micStream) {
+        state.micStream.getTracks().forEach((track) => track.stop());
+        state.micStream = null;
+      }
+      state.pendingTtsQueue = [];
+      state.pendingRequest = null;
+      clearSessionStorage();
+      location.reload();
+    }
+
+    window.onload = async () => {
+      window.registerUser = registerUser;
+      window.toggleVoiceInput = toggleVoiceInput;
+      window.startSession = startSession;
+      window.selectPlan = selectPlan;
+      window.createPayment = createPayment;
+      window.initializeMicrophone = initializeMicrophone;
+      window.sendManualMessage = sendManualMessage;
+      window.showScreen = showScreen;
+      window.logout = logout;
+      window.showLoginPrompt = showLoginPrompt;
+
+      selectPlan("basic");
+      syncMicButton();
+      if (!state.supportsSpeechRecognition) {
+        setStatusText("Этот браузер не поддерживает распознавание речи. Используйте текстовую панель или обычный Chrome/Edge по http://127.0.0.1:8000/.");
+      }
+
+      document.querySelectorAll('input[name="plan"]').forEach((radio) => {
+        radio.addEventListener("change", (event) => {
+          document.querySelectorAll(".radio-group label").forEach((label) => label.classList.remove("selected"));
+          event.target.closest("label").classList.add("selected");
+        });
+      });
+
+      document.getElementById("regName")?.addEventListener("keypress", (event) => {
+        if (event.key === "Enter") {
+          registerUser();
+        }
+      });
+
+      document.getElementById("manualInput")?.addEventListener("keydown", (event) => {
+        if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+          event.preventDefault();
+          if (state.isTtsPlaying) {
+            setStatusText("⏳ Дождитесь окончания ответа Лёни.");
+            return;
+          }
+          sendManualMessage();
+        }
+      });
+
+      const savedName = localStorage.getItem(STORAGE_KEYS.name);
+      const savedKey = localStorage.getItem(STORAGE_KEYS.apiKey);
+      const savedPlan = localStorage.getItem(STORAGE_KEYS.plan);
+
+      if (savedName) {
+        const nameInput = document.getElementById("regName");
+        if (nameInput) {
+          nameInput.value = savedName;
+        }
+      }
+
+      if (!savedName || !savedKey) {
+        document.getElementById("registerScreen").style.display = "flex";
+        document.getElementById("mainApp").style.display = "none";
+        return;
+      }
+
+      state.userName = savedName;
+      state.userApiKey = savedKey;
+      state.userPlan = savedPlan || "basic";
+
+      try {
+        await apiFetch("/status", { headers: { "X-API-Key": state.userApiKey } });
+        document.getElementById("registerScreen").style.display = "none";
+        document.getElementById("mainApp").style.display = "block";
+        setPlanBadge(state.userPlan);
+        await checkSessionStatus();
+      } catch (error) {
+        console.error("Saved session validation failed:", error);
+        document.getElementById("registerScreen").style.display = "flex";
+        document.getElementById("mainApp").style.display = "none";
+      }
+    };
+  </script>
+</body>
+</html>
