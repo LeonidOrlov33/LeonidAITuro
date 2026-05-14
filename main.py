@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import os
 import secrets
+import shutil
 import sqlite3
 import tempfile
 import uuid
@@ -24,9 +25,22 @@ from pydantic import BaseModel, field_validator
 
 load_dotenv()
 
+# ============================================
+# АДАПТАЦИЯ ДЛЯ RENDER: ПОСТОЯННОЕ ХРАНИЛИЩЕ
+# ============================================
+RENDER_DATA_DIR = os.getenv("RENDER_DATA_DIR", "/opt/render/project/src/data")
+os.makedirs(RENDER_DATA_DIR, exist_ok=True)
+
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = BASE_DIR / "tutor.db"
+DB_PATH = Path(RENDER_DATA_DIR) / "tutor.db"
 INDEX_PATH = BASE_DIR / "index.html"
+
+# Перенос существующей БД при первом запуске
+OLD_DB_PATH = BASE_DIR / "tutor.db"
+if OLD_DB_PATH.exists() and not DB_PATH.exists():
+    shutil.copy2(OLD_DB_PATH, DB_PATH)
+    print(f"✅ База данных перенесена в {DB_PATH}")
+# ============================================
 
 
 def env_flag(name: str, default: bool = False) -> bool:
@@ -80,15 +94,6 @@ class Config:
 
 config = Config()
 
-print("=" * 70)
-print("Lenya AI Tutor - production server")
-print("=" * 70)
-print(f"BASIC:   {config.PRICE_BASIC} RUB/month - {config.SESSIONS_PER_MONTH} sessions")
-print(f"PREMIUM: {config.PRICE_PREMIUM} RUB/month - {config.SESSIONS_PER_MONTH} sessions")
-print(f"Ollama API: {'loaded' if config.OLLAMA_API_KEY else 'missing'}")
-print(f"YooKassa: {'live' if config.yookassa_enabled() else 'test'}")
-print("=" * 70)
-
 
 class Database:
     _instance = None
@@ -101,8 +106,13 @@ class Database:
 
     @contextmanager
     def get_connection(self):
-        conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+        conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
         conn.row_factory = sqlite3.Row
+        # Оптимизации SQLite
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        conn.execute("PRAGMA cache_size=-2000")
+        conn.execute("PRAGMA temp_store=MEMORY")
         try:
             yield conn
             conn.commit()
@@ -616,13 +626,18 @@ async def send_ollama_chat(model: str, messages: list) -> dict:
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await db.init()
     await cleanup_old_temp_files()
+    print("=" * 70)
+    print("Лёня AI Tutor запущен на Render")
+    print(f"URL: {config.BASE_SERVER_URL}")
+    print(f"DB: {DB_PATH}")
+    print("=" * 70)
     yield
 
 
 app = FastAPI(
     title="Лёня AI Tutor",
     description="AI репетитор с голосом, подпиской и лимитами занятий",
-    version="7.2.1",
+    version="7.2.2-render",
     lifespan=lifespan
 )
 
@@ -681,6 +696,8 @@ async def api_info():
         "version": app.version,
         "test_payments_enabled": config.ENABLE_TEST_PAYMENTS,
         "payments_mode": "live" if config.yookassa_enabled() else "test",
+        "hosting": "Render",
+        "db_path": str(DB_PATH),
     }
 
 
@@ -691,6 +708,7 @@ async def health():
         return {
             "status": "healthy",
             "database": "connected",
+            "db_path": str(DB_PATH),
             "timestamp": datetime.utcnow().isoformat(),
             "ollama_configured": bool(config.OLLAMA_API_KEY),
             "payments_mode": "live" if config.yookassa_enabled() else "test",
@@ -868,7 +886,6 @@ async def chat(request: ChatRequest, req: Request, user: dict = Depends(verify_a
             user
         )
 
-    # Проверяем статус TTS если передан tts_id
     if request.tts_id and request.tts_id.strip():
         tts_session = await db.fetch_one(
             "SELECT * FROM tts_sessions WHERE id = ?",
@@ -895,7 +912,6 @@ async def chat(request: ChatRequest, req: Request, user: dict = Depends(verify_a
         elapsed_minutes = int((datetime.utcnow() - start).total_seconds() / 60) if start else 0
         remaining = max(0, config.SESSION_DURATION_MINUTES - elapsed_minutes)
 
-        # Создаем новую TTS сессию для ответа
         tts_id = str(uuid.uuid4())
         await db.execute(
             "INSERT INTO tts_sessions (id, completed) VALUES (?, 0)",
@@ -929,7 +945,6 @@ async def tts_server(request: TTSRequest, background_tasks: BackgroundTasks):
         communicate = edge_tts.Communicate(request.text, request.voice)
         await communicate.save(filepath)
         
-        # Сохраняем информацию о TTS сессии
         await db.execute(
             "INSERT INTO tts_sessions (id, completed) VALUES (?, 0)",
             (tts_id,)
@@ -938,7 +953,6 @@ async def tts_server(request: TTSRequest, background_tasks: BackgroundTasks):
         await db.execute("INSERT INTO temp_files (file_path) VALUES (?)", (filepath,))
         background_tasks.add_task(delete_file_later, filepath, 300)
         
-        # Добавляем TTS ID в заголовки ответа
         response = FileResponse(filepath, media_type="audio/mpeg")
         response.headers["X-TTS-ID"] = tts_id
         response.headers["Access-Control-Expose-Headers"] = "X-TTS-ID"
@@ -949,7 +963,6 @@ async def tts_server(request: TTSRequest, background_tasks: BackgroundTasks):
 
 @app.post("/tts/complete/{tts_id}")
 async def mark_tts_complete(tts_id: str):
-    """Отметить TTS как прослушанный"""
     await db.execute(
         "UPDATE tts_sessions SET completed = 1 WHERE id = ?",
         (tts_id,)
@@ -959,7 +972,6 @@ async def mark_tts_complete(tts_id: str):
 
 @app.get("/tts/status/{tts_id}")
 async def get_tts_status(tts_id: str):
-    """Проверка статуса воспроизведения TTS"""
     tts_session = await db.fetch_one(
         "SELECT * FROM tts_sessions WHERE id = ?",
         (tts_id,)
@@ -1127,9 +1139,26 @@ async def test_payment(payment_id: str):
 
 
 if __name__ == "__main__":
-    print("\nServer is ready")
+    port = int(os.getenv("PORT", "8000"))
+    
+    print("\n" + "=" * 70)
+    print("Лёня AI Tutor - Render Edition")
     print("=" * 70)
-    print(f"URL: {config.BASE_SERVER_URL or 'http://127.0.0.1:8000'}")
-    print(f"DB: {DB_PATH}")
+    print(f"BASIC:   {config.PRICE_BASIC} RUB/month - {config.SESSIONS_PER_MONTH} sessions")
+    print(f"PREMIUM: {config.PRICE_PREMIUM} RUB/month - {config.SESSIONS_PER_MONTH} sessions")
+    print(f"Ollama API: {'loaded' if config.OLLAMA_API_KEY else 'missing'}")
+    print(f"YooKassa: {'live' if config.yookassa_enabled() else 'test'}")
+    print(f"Server: {config.BASE_SERVER_URL}")
+    print(f"Database: {DB_PATH}")
+    print(f"Data dir: {RENDER_DATA_DIR}")
     print("=" * 70)
-    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="info")
+    
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=port,
+        log_level="info",
+        limit_concurrency=10,
+        limit_max_requests=1000,
+        timeout_keep_alive=30,
+    )
