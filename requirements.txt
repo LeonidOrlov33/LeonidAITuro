@@ -5,4 +5,4 @@ python-dotenv==1.0.0
 pydantic==2.5.3
 edge-tts==6.1.9
 python-multipart==0.0.6
-libsql-experimental==0.0.21
+psycopg2-binary==2.9.9
