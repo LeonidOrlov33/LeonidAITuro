@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: lenya-tutor
+    env: python
+    region: frankfurt
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py
+    envVars:
+      - key: OLLAMA_API_KEY
+        sync: false
+      - key: PORT
+        value: "8000"
+      - key: BASE_SERVER_URL
+        value: "https://lenya-tutor.onrender.com"
+      - key: ALLOWED_ORIGINS
+        value: "http://127.0.0.1:8000,http://localhost:8000,https://lenya-tutor.onrender.com"
+      - key: ENABLE_TEST_PAYMENTS
+        value: "true"
+    
+    disk:
+      name: data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1
+    
+    autoDeploy: true
