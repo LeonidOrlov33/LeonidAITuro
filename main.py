@@ -21,7 +21,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, field_validator
 
-# Для PostgreSQL
 import psycopg2
 import psycopg2.extras
 
@@ -99,17 +98,12 @@ class Database:
         return cls._instance
 
     def get_connection(self):
-        """Получить соединение с PostgreSQL"""
         conn = psycopg2.connect(SUPABASE_DB_URL)
         conn.autocommit = True
         return conn
 
     async def execute(self, query: str, params: tuple = ()):
         async with self._lock:
-            # Преобразуем SQLite-синтаксис в PostgreSQL
-            query = query.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
-            query = query.replace("TEXT DEFAULT CURRENT_TIMESTAMP", "TIMESTAMP DEFAULT NOW()")
-            
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(query, params)
@@ -117,8 +111,6 @@ class Database:
 
     async def fetch_one(self, query: str, params: tuple = ()):
         async with self._lock:
-            query = query.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
-            
             with self.get_connection() as conn:
                 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                     cur.execute(query, params)
@@ -127,8 +119,6 @@ class Database:
 
     async def fetch_all(self, query: str, params: tuple = ()):
         async with self._lock:
-            query = query.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
-            
             with self.get_connection() as conn:
                 with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
                     cur.execute(query, params)
@@ -136,7 +126,6 @@ class Database:
                     return [dict(row) for row in results]
 
     async def init(self):
-        """Создание таблиц в PostgreSQL"""
         with self.get_connection() as conn:
             with conn.cursor() as cur:
                 # Таблица users
@@ -145,7 +134,7 @@ class Database:
                         id SERIAL PRIMARY KEY,
                         name TEXT UNIQUE NOT NULL,
                         password_hash TEXT,
-                        user_api_key TEXT UNIQUE NOT NULL,
+                        user_api_key TEXT UNIQUE,
                         plan TEXT DEFAULT 'basic',
                         subscription_end TEXT,
                         sessions_used_this_month INTEGER DEFAULT 0,
@@ -155,40 +144,22 @@ class Database:
                         created_at TIMESTAMP DEFAULT NOW()
                     )
                 """)
-                
-                # Добавляем колонки если их нет
-                try:
-                    cur.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
-                except:
-                    pass
-                try:
-                    cur.execute("ALTER TABLE users ADD COLUMN user_api_key TEXT UNIQUE")
-                except:
-                    pass
-                try:
-                    cur.execute("ALTER TABLE users ADD COLUMN plan TEXT DEFAULT 'basic'")
-                except:
-                    pass
-                try:
-                    cur.execute("ALTER TABLE users ADD COLUMN subscription_end TEXT")
-                except:
-                    pass
-                try:
-                    cur.execute("ALTER TABLE users ADD COLUMN sessions_used_this_month INTEGER DEFAULT 0")
-                except:
-                    pass
-                try:
-                    cur.execute("ALTER TABLE users ADD COLUMN current_session_start TEXT")
-                except:
-                    pass
-                try:
-                    cur.execute("ALTER TABLE users ADD COLUMN last_session_month TEXT")
-                except:
-                    pass
-                try:
-                    cur.execute("ALTER TABLE users ADD COLUMN total_questions INTEGER DEFAULT 0")
-                except:
-                    pass
+
+                # Добавляем колонки если их нет (для миграции)
+                for col, col_type in [
+                    ("password_hash", "TEXT"),
+                    ("user_api_key", "TEXT"),
+                    ("plan", "TEXT DEFAULT 'basic'"),
+                    ("subscription_end", "TEXT"),
+                    ("sessions_used_this_month", "INTEGER DEFAULT 0"),
+                    ("current_session_start", "TEXT"),
+                    ("last_session_month", "TEXT"),
+                    ("total_questions", "INTEGER DEFAULT 0"),
+                ]:
+                    try:
+                        cur.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type}")
+                    except:
+                        pass
 
                 # Таблица payments
                 cur.execute("""
@@ -641,8 +612,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await db.init()
     await cleanup_old_temp_files()
     print("=" * 70)
-    print("Лёня AI Tutor запущен на Render + Supabase")
+    print("Лёня AI Tutor - Render + Supabase")
     print(f"URL: {config.BASE_SERVER_URL}")
+    print(f"BASIC: {config.PRICE_BASIC} RUB | PREMIUM: {config.PRICE_PREMIUM} RUB")
+    print(f"Сессий: {config.SESSIONS_PER_MONTH} | Длительность: {config.SESSION_DURATION_MINUTES} мин")
     print("=" * 70)
     yield
 
@@ -650,7 +623,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="Лёня AI Tutor",
     description="AI репетитор с голосом, подпиской и лимитами занятий",
-    version="7.4.0-supabase",
+    version="7.5.0",
     lifespan=lifespan
 )
 
@@ -695,10 +668,17 @@ async def delete_file_later(filepath: str, delay: int):
 async def root():
     if INDEX_PATH.exists():
         return FileResponse(INDEX_PATH)
+    return {"service": "Лёня AI Tutor", "version": app.version, "status": "OK"}
+
+
+@app.get("/api")
+async def api_info():
     return {
         "service": "Лёня AI Tutor",
         "version": app.version,
-        "status": "OK",
+        "test_payments_enabled": config.ENABLE_TEST_PAYMENTS,
+        "payments_mode": "live" if config.yookassa_enabled() else "test",
+        "hosting": "Render + Supabase",
     }
 
 
@@ -710,17 +690,15 @@ async def health():
             "status": "healthy",
             "database": "Supabase (PostgreSQL)",
             "timestamp": datetime.utcnow().isoformat(),
+            "ollama_configured": bool(config.OLLAMA_API_KEY),
         }
     except Exception as e:
-        return {"status": "error", "database": str(e)}
+        return {"status": "degraded", "database": str(e)}
 
 
 @app.post("/register")
 async def register(request: RegisterRequest):
-    existing = await db.fetch_one(
-        "SELECT * FROM users WHERE name = %s",
-        (request.name,)
-    )
+    existing = await db.fetch_one("SELECT * FROM users WHERE name = %s", (request.name,))
     if existing:
         if existing.get("password_hash"):
             if not SecurityUtils.verify_password(request.password, existing["password_hash"]):
@@ -742,10 +720,7 @@ async def register(request: RegisterRequest):
     password_hash = SecurityUtils.hash_password(request.password)
     current_month = datetime.utcnow().strftime("%Y-%m")
     await db.execute(
-        """
-        INSERT INTO users (name, password_hash, user_api_key, plan, last_session_month)
-        VALUES (%s, %s, %s, %s, %s)
-        """,
+        "INSERT INTO users (name, password_hash, user_api_key, plan, last_session_month) VALUES (%s, %s, %s, %s, %s)",
         (request.name, password_hash, user_api_key, request.plan, current_month)
     )
     return {
@@ -759,17 +734,12 @@ async def register(request: RegisterRequest):
 
 @app.post("/login")
 async def login(request: LoginRequest):
-    user = await db.fetch_one(
-        "SELECT * FROM users WHERE name = %s",
-        (request.name,)
-    )
+    user = await db.fetch_one("SELECT * FROM users WHERE name = %s", (request.name,))
     if not user:
         raise HTTPException(status_code=404, detail="Аккаунт не найден")
-
     if user.get("password_hash"):
         if not SecurityUtils.verify_password(request.password, user["password_hash"]):
             raise HTTPException(status_code=401, detail="Неверные имя или пароль")
-
     return {
         "name": user["name"],
         "user_api_key": user["user_api_key"],
@@ -798,10 +768,7 @@ async def start_session(user: dict = Depends(verify_user)):
                 }
 
     now = datetime.utcnow().isoformat()
-    await db.execute(
-        "UPDATE users SET current_session_start = %s WHERE id = %s",
-        (now, user["id"])
-    )
+    await db.execute("UPDATE users SET current_session_start = %s WHERE id = %s", (now, user["id"]))
     return {
         "session_active": True,
         "started_at": now,
@@ -869,11 +836,12 @@ async def session_status(user: dict = Depends(verify_user)):
 @app.post("/chat")
 async def chat(request: ChatRequest, req: Request, user: dict = Depends(verify_active_session)):
     if not config.OLLAMA_API_KEY:
-        return build_ai_unavailable_response(
-            "Сервис ИИ пока не настроен. Проверьте OLLAMA_API_KEY.",
-            "unconfigured",
-            user
-        )
+        return build_ai_unavailable_response("Сервис ИИ пока не настроен.", "unconfigured", user)
+
+    if request.tts_id and request.tts_id.strip():
+        tts_session = await db.fetch_one("SELECT * FROM tts_sessions WHERE id = %s", (request.tts_id,))
+        if tts_session and not tts_session.get("completed"):
+            raise HTTPException(425, "Дождитесь окончания воспроизведения предыдущего ответа")
 
     ip = SecurityUtils.get_client_ip(req)
     await RateLimiter.check_and_update(ip)
@@ -891,10 +859,7 @@ async def chat(request: ChatRequest, req: Request, user: dict = Depends(verify_a
         remaining = max(0, config.SESSION_DURATION_MINUTES - elapsed_minutes)
 
         tts_id = str(uuid.uuid4())
-        await db.execute(
-            "INSERT INTO tts_sessions (id, completed) VALUES (%s, 0)",
-            (tts_id,)
-        )
+        await db.execute("INSERT INTO tts_sessions (id, completed) VALUES (%s, 0)", (tts_id,))
 
         return {
             "response": data.get("message", {}).get("content", "Не удалось получить ответ"),
@@ -904,6 +869,8 @@ async def chat(request: ChatRequest, req: Request, user: dict = Depends(verify_a
         }
     except HTTPException:
         raise
+    except httpx.HTTPError:
+        return build_ai_unavailable_response("Не удалось связаться с Ollama Cloud.", model, user)
     except Exception as exc:
         raise HTTPException(500, f"Internal chat error: {str(exc)}") from exc
 
@@ -917,11 +884,7 @@ async def tts_server(request: TTSRequest, background_tasks: BackgroundTasks):
         communicate = edge_tts.Communicate(request.text, request.voice)
         await communicate.save(filepath)
 
-        await db.execute(
-            "INSERT INTO tts_sessions (id, completed) VALUES (%s, 0)",
-            (tts_id,)
-        )
-
+        await db.execute("INSERT INTO tts_sessions (id, completed) VALUES (%s, 0)", (tts_id,))
         await db.execute("INSERT INTO temp_files (file_path) VALUES (%s)", (filepath,))
         background_tasks.add_task(delete_file_later, filepath, 300)
 
@@ -935,11 +898,31 @@ async def tts_server(request: TTSRequest, background_tasks: BackgroundTasks):
 
 @app.post("/tts/complete/{tts_id}")
 async def mark_tts_complete(tts_id: str):
-    await db.execute(
-        "UPDATE tts_sessions SET completed = 1 WHERE id = %s",
-        (tts_id,)
-    )
-    return {"status": "ok"}
+    await db.execute("UPDATE tts_sessions SET completed = 1 WHERE id = %s", (tts_id,))
+    return {"status": "ok", "tts_id": tts_id}
+
+
+@app.get("/tts/status/{tts_id}")
+async def get_tts_status(tts_id: str):
+    tts_session = await db.fetch_one("SELECT * FROM tts_sessions WHERE id = %s", (tts_id,))
+    if not tts_session:
+        return {"tts_id": tts_id, "completed": True, "not_found": True}
+    return {
+        "tts_id": tts_id,
+        "completed": bool(tts_session.get("completed")),
+        "created_at": str(tts_session.get("created_at"))
+    }
+
+
+@app.get("/tts/voices")
+async def get_voices():
+    return {
+        "voices": [
+            {"id": "ru-RU-DmitryNeural", "name": "Дмитрий", "gender": "male"},
+            {"id": "ru-RU-SvetlanaNeural", "name": "Светлана", "gender": "female"},
+            {"id": "ru-RU-DariyaNeural", "name": "Дарья", "gender": "female"},
+        ]
+    }
 
 
 @app.get("/status")
@@ -951,31 +934,72 @@ async def get_status(user: dict = Depends(verify_user)):
     return {
         "name": user.get("name"),
         "plan": user.get("plan", "basic"),
+        "model": config.MODEL_PREMIUM if user.get("plan") == "premium" else config.MODEL_BASIC,
         "has_subscription": subscription_is_active(user.get("subscription_end")),
+        "subscription_end": user.get("subscription_end"),
         "sessions_used": sessions_used,
         "sessions_left": max(0, config.SESSIONS_PER_MONTH - sessions_used),
         "total_questions": user.get("total_questions", 0),
+        "current_session": {
+            "active": user.get("current_session_start") is not None,
+            "started_at": user.get("current_session_start")
+        } if user.get("current_session_start") else None
     }
 
 
 @app.post("/payment/create")
 async def create_payment(request: PaymentRequest):
-    user = await db.fetch_one(
-        "SELECT * FROM users WHERE user_api_key = %s",
-        (request.user_api_key,)
-    )
+    user = await db.fetch_one("SELECT * FROM users WHERE user_api_key = %s", (request.user_api_key,))
     if not user:
         raise HTTPException(401, "Неверный API ключ")
 
     amount = config.PRICE_BASIC if request.plan == "basic" else config.PRICE_PREMIUM
     internal_payment_id = f"lenya_{uuid.uuid4().hex[:12]}"
     await db.execute(
-        """
-        INSERT INTO payments (user_id, amount, plan, payment_id, status)
-        VALUES (%s, %s, %s, %s, 'pending')
-        """,
+        "INSERT INTO payments (user_id, amount, plan, payment_id, status) VALUES (%s, %s, %s, %s, 'pending')",
         (user["id"], amount, request.plan, internal_payment_id)
     )
+
+    if config.yookassa_enabled():
+        try:
+            auth = base64.b64encode(
+                f"{config.YOOKASSA_SHOP_ID}:{config.YOOKASSA_SECRET_KEY}".encode()
+            ).decode()
+            headers = {
+                "Authorization": f"Basic {auth}",
+                "Idempotence-Key": str(uuid.uuid4()),
+                "Content-Type": "application/json",
+            }
+            payload = {
+                "amount": {"value": str(amount), "currency": "RUB"},
+                "confirmation": {
+                    "type": "redirect",
+                    "return_url": f"{config.BASE_SERVER_URL}/payment/success",
+                },
+                "capture": True,
+                "description": f"Лёня AI Tutor - {request.plan.upper()}",
+                "metadata": {"internal_payment_id": internal_payment_id},
+            }
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(config.YOOKASSA_API_URL, json=payload, headers=headers)
+            if response.status_code != 200:
+                raise HTTPException(400, f"Ошибка YooKassa: {response.text}")
+            data = response.json()
+            confirmation_url = data["confirmation"]["confirmation_url"]
+            await db.execute(
+                "UPDATE payments SET yookassa_id = %s, confirmation_url = %s WHERE payment_id = %s",
+                (data["id"], confirmation_url, internal_payment_id)
+            )
+            return {
+                "payment_id": internal_payment_id,
+                "amount": amount,
+                "plan": request.plan,
+                "confirmation_url": confirmation_url,
+            }
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(500, f"Ошибка создания платежа: {str(exc)}") from exc
 
     test_url = f"{config.BASE_SERVER_URL}/payment/test?payment_id={internal_payment_id}"
     return {
@@ -987,23 +1011,39 @@ async def create_payment(request: PaymentRequest):
     }
 
 
+@app.post("/webhooks/yookassa")
+async def yookassa_webhook(request: Request):
+    try:
+        event_json = await request.json()
+        event_type = event_json.get("event")
+        payment_info = event_json.get("object", {})
+        metadata = payment_info.get("metadata", {})
+        internal_payment_id = metadata.get("internal_payment_id")
+        if not internal_payment_id:
+            return {"status": "error", "message": "No payment id"}
+        if event_type == "payment.succeeded":
+            await activate_payment(internal_payment_id)
+        return {"status": "ok"}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@app.get("/payment/success")
+async def payment_success():
+    return render_payment_result("Оплата прошла успешно", "Подписка активирована на 30 дней.")
+
+
 @app.get("/payment/test")
 async def test_payment(payment_id: str):
     payment, activated = await activate_payment(payment_id)
     if not payment:
         return render_payment_result("Платёж не найден", "Проверьте ссылку.", "#f44336")
     if not activated and payment.get("status") == "success":
-        return render_payment_result("Уже активировано", "Этот платёж уже обработан.")
-
+        return render_payment_result("Уже активировано", "Платёж уже обработан.")
     return render_payment_result(
         "Тестовая оплата успешна",
         f"Тариф {payment.get('plan', '').upper()} активирован. Сумма: {payment.get('amount')} RUB.",
     )
-
-
-@app.get("/payment/success")
-async def payment_success():
-    return render_payment_result("Оплата прошла успешно", "Подписка активирована на 30 дней.")
 
 
 if __name__ == "__main__":
