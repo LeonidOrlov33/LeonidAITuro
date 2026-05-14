@@ -4,11 +4,10 @@ import hashlib
 import hmac
 import os
 import secrets
-import sqlite3
 import tempfile
 import uuid
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -22,34 +21,19 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel, field_validator
 
+# Для PostgreSQL
+import psycopg2
+import psycopg2.extras
+
 load_dotenv()
 
 # ============================================
-# КОНФИГУРАЦИЯ TURSO (ОБЛАЧНЫЙ SQLITE)
+# ПОДКЛЮЧЕНИЕ К SUPABASE (PostgreSQL)
 # ============================================
-USE_TURSO = os.getenv("USE_TURSO", "true").lower() in {"1", "true", "yes"}
-TURSO_DB_URL = os.getenv("TURSO_DB_URL", "")
-TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN", "")
-
-# Импортируем libsql только если используем Turso
-if USE_TURSO and TURSO_DB_URL and TURSO_AUTH_TOKEN:
-    try:
-        import libsql_experimental as libsql
-        TURSO_ENABLED = True
-        print("✅ Turso (libsql) подключён")
-    except ImportError:
-        print("⚠️ libsql_experimental не установлен. Установите: pip install libsql-experimental")
-        TURSO_ENABLED = False
-        USE_TURSO = False
-else:
-    TURSO_ENABLED = False
-    USE_TURSO = False
+SUPABASE_DB_URL = os.getenv("SUPABASE_DB_URL", "")
 
 BASE_DIR = Path(__file__).resolve().parent
 INDEX_PATH = BASE_DIR / "index.html"
-
-# Локальный путь к БД (используется если Turso выключен)
-LOCAL_DB_PATH = BASE_DIR / "tutor.db"
 # ============================================
 
 
@@ -85,7 +69,7 @@ class Config:
 
     ALLOWED_ORIGINS = env_csv(
         "ALLOWED_ORIGINS",
-        "http://127.0.0.1:8000,http://localhost:8000,null"
+        "http://127.0.0.1:8000,http://localhost:8000"
     )
     TRUST_PROXY_HEADERS = env_flag("TRUST_PROXY_HEADERS", False)
     ENABLE_TEST_PAYMENTS = env_flag("ENABLE_TEST_PAYMENTS", True)
@@ -114,142 +98,141 @@ class Database:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    def _get_turso_connection(self):
-        """Получить соединение с Turso через libsql"""
-        if not TURSO_ENABLED:
-            raise RuntimeError("Turso не настроен")
-        
-        conn = libsql.connect(
-            database=TURSO_DB_URL,
-            auth_token=TURSO_AUTH_TOKEN
-        )
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("PRAGMA synchronous=NORMAL")
-        return conn
-
-    @contextmanager
     def get_connection(self):
-        if USE_TURSO and TURSO_ENABLED:
-            conn = self._get_turso_connection()
-        else:
-            conn = sqlite3.connect(str(LOCAL_DB_PATH), check_same_thread=False)
-            conn.row_factory = sqlite3.Row
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
-            conn.execute("PRAGMA cache_size=-2000")
-            conn.execute("PRAGMA temp_store=MEMORY")
-        
-        try:
-            yield conn
-            conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+        """Получить соединение с PostgreSQL"""
+        conn = psycopg2.connect(SUPABASE_DB_URL)
+        conn.autocommit = True
+        return conn
 
     async def execute(self, query: str, params: tuple = ()):
         async with self._lock:
+            # Преобразуем SQLite-синтаксис в PostgreSQL
+            query = query.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
+            query = query.replace("TEXT DEFAULT CURRENT_TIMESTAMP", "TIMESTAMP DEFAULT NOW()")
+            
             with self.get_connection() as conn:
-                return conn.execute(query, params)
+                with conn.cursor() as cur:
+                    cur.execute(query, params)
+                    return cur
 
     async def fetch_one(self, query: str, params: tuple = ()):
         async with self._lock:
+            query = query.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
+            
             with self.get_connection() as conn:
-                cursor = conn.execute(query, params)
-                return cursor.fetchone()
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute(query, params)
+                    result = cur.fetchone()
+                    return dict(result) if result else None
 
     async def fetch_all(self, query: str, params: tuple = ()):
         async with self._lock:
+            query = query.replace("INTEGER PRIMARY KEY AUTOINCREMENT", "SERIAL PRIMARY KEY")
+            
             with self.get_connection() as conn:
-                cursor = conn.execute(query, params)
-                return cursor.fetchall()
+                with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+                    cur.execute(query, params)
+                    results = cur.fetchall()
+                    return [dict(row) for row in results]
 
     async def init(self):
-        """Инициализация таблиц"""
+        """Создание таблиц в PostgreSQL"""
         with self.get_connection() as conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS users (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT UNIQUE NOT NULL,
-                    password_hash TEXT,
-                    user_api_key TEXT UNIQUE NOT NULL,
-                    plan TEXT DEFAULT 'basic',
-                    subscription_end TEXT,
-                    sessions_used_this_month INTEGER DEFAULT 0,
-                    current_session_start TEXT,
-                    last_session_month TEXT,
-                    total_questions INTEGER DEFAULT 0,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
+            with conn.cursor() as cur:
+                # Таблица users
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS users (
+                        id SERIAL PRIMARY KEY,
+                        name TEXT UNIQUE NOT NULL,
+                        password_hash TEXT,
+                        user_api_key TEXT UNIQUE NOT NULL,
+                        plan TEXT DEFAULT 'basic',
+                        subscription_end TEXT,
+                        sessions_used_this_month INTEGER DEFAULT 0,
+                        current_session_start TEXT,
+                        last_session_month TEXT,
+                        total_questions INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                """)
+                
+                # Добавляем колонки если их нет
+                try:
+                    cur.execute("ALTER TABLE users ADD COLUMN password_hash TEXT")
+                except:
+                    pass
+                try:
+                    cur.execute("ALTER TABLE users ADD COLUMN user_api_key TEXT UNIQUE")
+                except:
+                    pass
+                try:
+                    cur.execute("ALTER TABLE users ADD COLUMN plan TEXT DEFAULT 'basic'")
+                except:
+                    pass
+                try:
+                    cur.execute("ALTER TABLE users ADD COLUMN subscription_end TEXT")
+                except:
+                    pass
+                try:
+                    cur.execute("ALTER TABLE users ADD COLUMN sessions_used_this_month INTEGER DEFAULT 0")
+                except:
+                    pass
+                try:
+                    cur.execute("ALTER TABLE users ADD COLUMN current_session_start TEXT")
+                except:
+                    pass
+                try:
+                    cur.execute("ALTER TABLE users ADD COLUMN last_session_month TEXT")
+                except:
+                    pass
+                try:
+                    cur.execute("ALTER TABLE users ADD COLUMN total_questions INTEGER DEFAULT 0")
+                except:
+                    pass
 
-            cursor = conn.execute("PRAGMA table_info(users)")
-            columns = [column[1] for column in cursor.fetchall()]
-            required = {
-                "password_hash": "TEXT",
-                "user_api_key": "TEXT",
-                "plan": "TEXT DEFAULT 'basic'",
-                "subscription_end": "TEXT",
-                "sessions_used_this_month": "INTEGER DEFAULT 0",
-                "current_session_start": "TEXT",
-                "last_session_month": "TEXT",
-                "total_questions": "INTEGER DEFAULT 0",
-            }
-            for column_name, column_type in required.items():
-                if column_name not in columns:
-                    conn.execute(f"ALTER TABLE users ADD COLUMN {column_name} {column_type}")
+                # Таблица payments
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS payments (
+                        id SERIAL PRIMARY KEY,
+                        user_id INTEGER NOT NULL,
+                        amount INTEGER NOT NULL,
+                        plan TEXT NOT NULL,
+                        status TEXT DEFAULT 'pending',
+                        payment_id TEXT UNIQUE,
+                        yookassa_id TEXT,
+                        confirmation_url TEXT,
+                        created_at TIMESTAMP DEFAULT NOW(),
+                        paid_at TEXT
+                    )
+                """)
 
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS payments (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL,
-                    amount INTEGER NOT NULL,
-                    plan TEXT NOT NULL,
-                    status TEXT DEFAULT 'pending',
-                    payment_id TEXT UNIQUE,
-                    yookassa_id TEXT,
-                    confirmation_url TEXT,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    paid_at TEXT
-                )
-                """
-            )
+                # Таблица rate_limits
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS rate_limits (
+                        ip TEXT PRIMARY KEY,
+                        requests_count INTEGER DEFAULT 1,
+                        first_request TEXT,
+                        blocked_until TEXT
+                    )
+                """)
 
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS rate_limits (
-                    ip TEXT PRIMARY KEY,
-                    requests_count INTEGER DEFAULT 1,
-                    first_request TEXT,
-                    blocked_until TEXT
-                )
-                """
-            )
+                # Таблица temp_files
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS temp_files (
+                        id SERIAL PRIMARY KEY,
+                        file_path TEXT UNIQUE,
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                """)
 
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS temp_files (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    file_path TEXT UNIQUE,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
-
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS tts_sessions (
-                    id TEXT PRIMARY KEY,
-                    completed INTEGER DEFAULT 0,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP
-                )
-                """
-            )
+                # Таблица tts_sessions
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS tts_sessions (
+                        id TEXT PRIMARY KEY,
+                        completed INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT NOW()
+                    )
+                """)
 
 
 db = Database()
@@ -415,12 +398,12 @@ class SessionManager:
     async def reset_monthly_sessions(user_id: int):
         current_month = datetime.utcnow().strftime("%Y-%m")
         user = await db.fetch_one(
-            "SELECT last_session_month FROM users WHERE id = ?",
+            "SELECT last_session_month FROM users WHERE id = %s",
             (user_id,)
         )
-        if user and user["last_session_month"] != current_month:
+        if user and user.get("last_session_month") != current_month:
             await db.execute(
-                "UPDATE users SET sessions_used_this_month = 0, last_session_month = ? WHERE id = ?",
+                "UPDATE users SET sessions_used_this_month = 0, last_session_month = %s WHERE id = %s",
                 (current_month, user_id)
             )
             return True
@@ -433,7 +416,7 @@ class SessionManager:
             UPDATE users
             SET sessions_used_this_month = sessions_used_this_month + 1,
                 current_session_start = NULL
-            WHERE id = ? AND current_session_start = ?
+            WHERE id = %s AND current_session_start = %s
             """,
             (user_id, started_at)
         )
@@ -442,8 +425,11 @@ class SessionManager:
     async def validate_and_prepare_session(user: Dict[str, Any]) -> Dict[str, Any]:
         user_id = user["id"]
         await SessionManager.reset_monthly_sessions(user_id)
-        user_row = await db.fetch_one("SELECT * FROM users WHERE id = ?", (user_id,))
-        user = dict(user_row)
+        user_row = await db.fetch_one("SELECT * FROM users WHERE id = %s", (user_id,))
+        user = dict(user_row) if user_row else {}
+
+        if not user:
+            raise HTTPException(403, "Пользователь не найден")
 
         if not subscription_is_active(user.get("subscription_end")):
             if user.get("subscription_end"):
@@ -455,8 +441,8 @@ class SessionManager:
             session_start = parse_datetime(current_session_start)
             if session_start and datetime.utcnow() - session_start > timedelta(minutes=config.SESSION_DURATION_MINUTES):
                 await SessionManager.finish_expired_session(user_id, current_session_start)
-                user_row = await db.fetch_one("SELECT * FROM users WHERE id = ?", (user_id,))
-                user = dict(user_row)
+                user_row = await db.fetch_one("SELECT * FROM users WHERE id = %s", (user_id,))
+                user = dict(user_row) if user_row else {}
 
         if user.get("sessions_used_this_month", 0) >= config.SESSIONS_PER_MONTH:
             raise HTTPException(403, f"Лимит исчерпан: {config.SESSIONS_PER_MONTH} занятий в месяц.")
@@ -468,51 +454,51 @@ class RateLimiter:
     @staticmethod
     async def check_and_update(ip: str, limit: int = 30, window: int = 60, block_time: int = 300):
         now = datetime.utcnow()
-        rate = await db.fetch_one("SELECT * FROM rate_limits WHERE ip = ?", (ip,))
+        rate = await db.fetch_one("SELECT * FROM rate_limits WHERE ip = %s", (ip,))
 
         if not rate:
             await db.execute(
-                "INSERT INTO rate_limits (ip, first_request) VALUES (?, ?)",
+                "INSERT INTO rate_limits (ip, first_request) VALUES (%s, %s)",
                 (ip, now.isoformat())
             )
             return
 
-        blocked_until = parse_datetime(rate["blocked_until"])
+        blocked_until = parse_datetime(rate.get("blocked_until"))
         if blocked_until and blocked_until > now:
             seconds_left = int((blocked_until - now).total_seconds())
             raise HTTPException(429, f"Слишком много запросов. Попробуйте через {seconds_left} сек.")
 
-        first_request = parse_datetime(rate["first_request"])
+        first_request = parse_datetime(rate.get("first_request"))
         if not first_request or (now - first_request).total_seconds() > window:
             await db.execute(
-                "UPDATE rate_limits SET requests_count = 1, first_request = ?, blocked_until = NULL WHERE ip = ?",
+                "UPDATE rate_limits SET requests_count = 1, first_request = %s, blocked_until = NULL WHERE ip = %s",
                 (now.isoformat(), ip)
             )
             return
 
-        new_count = rate["requests_count"] + 1
+        new_count = rate.get("requests_count", 0) + 1
         if new_count > limit:
             blocked_until = (now + timedelta(seconds=block_time)).isoformat()
             await db.execute(
-                "UPDATE rate_limits SET requests_count = ?, blocked_until = ? WHERE ip = ?",
+                "UPDATE rate_limits SET requests_count = %s, blocked_until = %s WHERE ip = %s",
                 (new_count, blocked_until, ip)
             )
             raise HTTPException(429, f"IP заблокирован на {block_time} секунд")
 
         await db.execute(
-            "UPDATE rate_limits SET requests_count = ? WHERE ip = ?",
+            "UPDATE rate_limits SET requests_count = %s WHERE ip = %s",
             (new_count, ip)
         )
 
 
 async def verify_user(x_api_key: str = Header(...)):
     user = await db.fetch_one(
-        "SELECT * FROM users WHERE user_api_key = ?",
+        "SELECT * FROM users WHERE user_api_key = %s",
         (x_api_key,)
     )
     if not user:
         raise HTTPException(401, "Неверный API ключ")
-    return dict(user)
+    return user
 
 
 async def verify_active_session(user: dict = Depends(verify_user)):
@@ -580,12 +566,12 @@ def render_payment_result(title: str, message: str, accent: str = "#4caf50") -> 
 
 async def activate_payment(payment_id: str):
     payment = await db.fetch_one(
-        "SELECT * FROM payments WHERE payment_id = ?",
+        "SELECT * FROM payments WHERE payment_id = %s",
         (payment_id,)
     )
     if not payment:
         return None, False
-    if payment["status"] == "success":
+    if payment.get("status") == "success":
         return payment, False
 
     subscription_end = (datetime.utcnow() + timedelta(days=30)).isoformat()
@@ -594,25 +580,25 @@ async def activate_payment(payment_id: str):
     await db.execute(
         """
         UPDATE users
-        SET plan = ?,
-            subscription_end = ?,
+        SET plan = %s,
+            subscription_end = %s,
             sessions_used_this_month = 0,
-            last_session_month = ?,
+            last_session_month = %s,
             current_session_start = NULL
-        WHERE id = ?
+        WHERE id = %s
         """,
         (payment["plan"], subscription_end, current_month, payment["user_id"])
     )
     await db.execute(
         """
         UPDATE payments
-        SET status = 'success', paid_at = ?
-        WHERE payment_id = ?
+        SET status = 'success', paid_at = %s
+        WHERE payment_id = %s
         """,
         (datetime.utcnow().isoformat(), payment_id)
     )
     updated_payment = await db.fetch_one(
-        "SELECT * FROM payments WHERE payment_id = ?",
+        "SELECT * FROM payments WHERE payment_id = %s",
         (payment_id,)
     )
     return updated_payment, True
@@ -655,10 +641,8 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await db.init()
     await cleanup_old_temp_files()
     print("=" * 70)
-    print("Лёня AI Tutor запущен на Render + Turso")
+    print("Лёня AI Tutor запущен на Render + Supabase")
     print(f"URL: {config.BASE_SERVER_URL}")
-    print(f"Turso: {'✅ подключён' if TURSO_ENABLED else '❌ не используется'}")
-    print(f"DB: {'Turso Cloud' if USE_TURSO else LOCAL_DB_PATH}")
     print("=" * 70)
     yield
 
@@ -666,13 +650,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="Лёня AI Tutor",
     description="AI репетитор с голосом, подпиской и лимитами занятий",
-    version="7.2.3-turso",
+    version="7.4.0-supabase",
     lifespan=lifespan
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=config.ALLOWED_ORIGINS or ["http://127.0.0.1:8000"],
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["X-TTS-ID"],
@@ -682,17 +666,17 @@ app.add_middleware(
 async def cleanup_old_temp_files():
     try:
         old_files = await db.fetch_all(
-            "SELECT file_path FROM temp_files WHERE created_at < datetime('now', '-1 hour')"
+            "SELECT file_path FROM temp_files WHERE created_at < NOW() - INTERVAL '1 hour'"
         )
         for file in old_files:
-            file_path = file["file_path"]
+            file_path = file.get("file_path")
             try:
                 if file_path and os.path.exists(file_path):
                     os.remove(file_path)
             except OSError:
                 pass
-        await db.execute("DELETE FROM temp_files WHERE created_at < datetime('now', '-1 hour')")
-        await db.execute("DELETE FROM tts_sessions WHERE created_at < datetime('now', '-1 hour')")
+        await db.execute("DELETE FROM temp_files WHERE created_at < NOW() - INTERVAL '1 hour'")
+        await db.execute("DELETE FROM tts_sessions WHERE created_at < NOW() - INTERVAL '1 hour'")
     except Exception:
         pass
 
@@ -702,7 +686,7 @@ async def delete_file_later(filepath: str, delay: int):
     try:
         if os.path.exists(filepath):
             os.remove(filepath)
-        await db.execute("DELETE FROM temp_files WHERE file_path = ?", (filepath,))
+        await db.execute("DELETE FROM temp_files WHERE file_path = %s", (filepath,))
     except Exception:
         pass
 
@@ -714,19 +698,7 @@ async def root():
     return {
         "service": "Лёня AI Tutor",
         "version": app.version,
-        "status": "frontend file missing",
-    }
-
-
-@app.get("/api")
-async def api_info():
-    return {
-        "service": "Лёня AI Tutor",
-        "version": app.version,
-        "test_payments_enabled": config.ENABLE_TEST_PAYMENTS,
-        "payments_mode": "live" if config.yookassa_enabled() else "test",
-        "hosting": "Render + Turso",
-        "turso_enabled": TURSO_ENABLED,
+        "status": "OK",
     }
 
 
@@ -736,36 +708,33 @@ async def health():
         await db.execute("SELECT 1")
         return {
             "status": "healthy",
-            "database": "connected",
-            "turso_enabled": TURSO_ENABLED,
+            "database": "Supabase (PostgreSQL)",
             "timestamp": datetime.utcnow().isoformat(),
-            "ollama_configured": bool(config.OLLAMA_API_KEY),
-            "payments_mode": "live" if config.yookassa_enabled() else "test",
         }
-    except Exception:
-        return {"status": "degraded", "database": "disconnected"}
+    except Exception as e:
+        return {"status": "error", "database": str(e)}
 
 
 @app.post("/register")
 async def register(request: RegisterRequest):
     existing = await db.fetch_one(
-        "SELECT * FROM users WHERE name = ?",
+        "SELECT * FROM users WHERE name = %s",
         (request.name,)
     )
     if existing:
-        if existing["password_hash"]:
+        if existing.get("password_hash"):
             if not SecurityUtils.verify_password(request.password, existing["password_hash"]):
                 raise HTTPException(status_code=401, detail="Неверные имя или пароль")
         else:
             await db.execute(
-                "UPDATE users SET password_hash = ? WHERE id = ?",
+                "UPDATE users SET password_hash = %s WHERE id = %s",
                 (SecurityUtils.hash_password(request.password), existing["id"])
             )
         return {
             "name": request.name,
             "user_api_key": existing["user_api_key"],
-            "plan": existing["plan"] or "basic",
-            "has_subscription": subscription_is_active(existing["subscription_end"]),
+            "plan": existing.get("plan") or "basic",
+            "has_subscription": subscription_is_active(existing.get("subscription_end")),
             "message": "Вход выполнен успешно",
         }
 
@@ -775,7 +744,7 @@ async def register(request: RegisterRequest):
     await db.execute(
         """
         INSERT INTO users (name, password_hash, user_api_key, plan, last_session_month)
-        VALUES (?, ?, ?, ?, ?)
+        VALUES (%s, %s, %s, %s, %s)
         """,
         (request.name, password_hash, user_api_key, request.plan, current_month)
     )
@@ -791,30 +760,21 @@ async def register(request: RegisterRequest):
 @app.post("/login")
 async def login(request: LoginRequest):
     user = await db.fetch_one(
-        "SELECT * FROM users WHERE name = ?",
+        "SELECT * FROM users WHERE name = %s",
         (request.name,)
     )
     if not user:
         raise HTTPException(status_code=404, detail="Аккаунт не найден")
 
-    if user["password_hash"]:
+    if user.get("password_hash"):
         if not SecurityUtils.verify_password(request.password, user["password_hash"]):
             raise HTTPException(status_code=401, detail="Неверные имя или пароль")
-    else:
-        await db.execute(
-            "UPDATE users SET password_hash = ? WHERE id = ?",
-            (SecurityUtils.hash_password(request.password), user["id"])
-        )
-        user = await db.fetch_one(
-            "SELECT * FROM users WHERE id = ?",
-            (user["id"],)
-        )
 
     return {
         "name": user["name"],
         "user_api_key": user["user_api_key"],
-        "plan": user["plan"] or "basic",
-        "has_subscription": subscription_is_active(user["subscription_end"]),
+        "plan": user.get("plan") or "basic",
+        "has_subscription": subscription_is_active(user.get("subscription_end")),
         "message": "Вход выполнен успешно",
     }
 
@@ -839,7 +799,7 @@ async def start_session(user: dict = Depends(verify_user)):
 
     now = datetime.utcnow().isoformat()
     await db.execute(
-        "UPDATE users SET current_session_start = ? WHERE id = ?",
+        "UPDATE users SET current_session_start = %s WHERE id = %s",
         (now, user["id"])
     )
     return {
@@ -854,8 +814,8 @@ async def start_session(user: dict = Depends(verify_user)):
 @app.get("/session/status")
 async def session_status(user: dict = Depends(verify_user)):
     await SessionManager.reset_monthly_sessions(user["id"])
-    user_row = await db.fetch_one("SELECT * FROM users WHERE id = ?", (user["id"],))
-    user = dict(user_row)
+    user_row = await db.fetch_one("SELECT * FROM users WHERE id = %s", (user["id"],))
+    user = dict(user_row) if user_row else {}
 
     has_subscription = subscription_is_active(user.get("subscription_end"))
     sessions_used = user.get("sessions_used_this_month", 0)
@@ -910,21 +870,10 @@ async def session_status(user: dict = Depends(verify_user)):
 async def chat(request: ChatRequest, req: Request, user: dict = Depends(verify_active_session)):
     if not config.OLLAMA_API_KEY:
         return build_ai_unavailable_response(
-            "Сервис ИИ пока не настроен. Проверьте OLLAMA_API_KEY или подключите локальный Ollama.",
+            "Сервис ИИ пока не настроен. Проверьте OLLAMA_API_KEY.",
             "unconfigured",
             user
         )
-
-    if request.tts_id and request.tts_id.strip():
-        tts_session = await db.fetch_one(
-            "SELECT * FROM tts_sessions WHERE id = ?",
-            (request.tts_id,)
-        )
-        if tts_session and not tts_session["completed"]:
-            raise HTTPException(
-                425, 
-                "Дождитесь окончания воспроизведения предыдущего ответа"
-            )
 
     ip = SecurityUtils.get_client_ip(req)
     await RateLimiter.check_and_update(ip)
@@ -933,7 +882,7 @@ async def chat(request: ChatRequest, req: Request, user: dict = Depends(verify_a
     try:
         data = await send_ollama_chat(model, request.messages)
         await db.execute(
-            "UPDATE users SET total_questions = total_questions + 1 WHERE id = ?",
+            "UPDATE users SET total_questions = total_questions + 1 WHERE id = %s",
             (user["id"],)
         )
 
@@ -943,7 +892,7 @@ async def chat(request: ChatRequest, req: Request, user: dict = Depends(verify_a
 
         tts_id = str(uuid.uuid4())
         await db.execute(
-            "INSERT INTO tts_sessions (id, completed) VALUES (?, 0)",
+            "INSERT INTO tts_sessions (id, completed) VALUES (%s, 0)",
             (tts_id,)
         )
 
@@ -955,12 +904,6 @@ async def chat(request: ChatRequest, req: Request, user: dict = Depends(verify_a
         }
     except HTTPException:
         raise
-    except httpx.HTTPError:
-        return build_ai_unavailable_response(
-            "Не удалось связаться с Ollama Cloud. Проверьте интернет, DNS или доступность ollama.com, либо переключитесь на локальный Ollama.",
-            model,
-            user
-        )
     except Exception as exc:
         raise HTTPException(500, f"Internal chat error: {str(exc)}") from exc
 
@@ -973,15 +916,15 @@ async def tts_server(request: TTSRequest, background_tasks: BackgroundTasks):
         filepath = os.path.join(tempfile.gettempdir(), filename)
         communicate = edge_tts.Communicate(request.text, request.voice)
         await communicate.save(filepath)
-        
+
         await db.execute(
-            "INSERT INTO tts_sessions (id, completed) VALUES (?, 0)",
+            "INSERT INTO tts_sessions (id, completed) VALUES (%s, 0)",
             (tts_id,)
         )
-        
-        await db.execute("INSERT INTO temp_files (file_path) VALUES (?)", (filepath,))
+
+        await db.execute("INSERT INTO temp_files (file_path) VALUES (%s)", (filepath,))
         background_tasks.add_task(delete_file_later, filepath, 300)
-        
+
         response = FileResponse(filepath, media_type="audio/mpeg")
         response.headers["X-TTS-ID"] = tts_id
         response.headers["Access-Control-Expose-Headers"] = "X-TTS-ID"
@@ -993,65 +936,32 @@ async def tts_server(request: TTSRequest, background_tasks: BackgroundTasks):
 @app.post("/tts/complete/{tts_id}")
 async def mark_tts_complete(tts_id: str):
     await db.execute(
-        "UPDATE tts_sessions SET completed = 1 WHERE id = ?",
+        "UPDATE tts_sessions SET completed = 1 WHERE id = %s",
         (tts_id,)
     )
-    return {"status": "ok", "tts_id": tts_id}
-
-
-@app.get("/tts/status/{tts_id}")
-async def get_tts_status(tts_id: str):
-    tts_session = await db.fetch_one(
-        "SELECT * FROM tts_sessions WHERE id = ?",
-        (tts_id,)
-    )
-    if not tts_session:
-        return {"tts_id": tts_id, "completed": True, "not_found": True}
-    
-    return {
-        "tts_id": tts_id,
-        "completed": bool(tts_session["completed"]),
-        "created_at": tts_session["created_at"]
-    }
-
-
-@app.get("/tts/voices")
-async def get_voices():
-    return {
-        "voices": [
-            {"id": "ru-RU-DmitryNeural", "name": "Дмитрий", "gender": "male", "description": "Спокойный мужской голос"},
-            {"id": "ru-RU-SvetlanaNeural", "name": "Светлана", "gender": "female", "description": "Приятный женский голос"},
-            {"id": "ru-RU-DariyaNeural", "name": "Дарья", "gender": "female", "description": "Молодой женский голос"},
-        ]
-    }
+    return {"status": "ok"}
 
 
 @app.get("/status")
 async def get_status(user: dict = Depends(verify_user)):
     await SessionManager.reset_monthly_sessions(user["id"])
-    user_row = await db.fetch_one("SELECT * FROM users WHERE id = ?", (user["id"],))
-    user = dict(user_row)
+    user_row = await db.fetch_one("SELECT * FROM users WHERE id = %s", (user["id"],))
+    user = dict(user_row) if user_row else {}
     sessions_used = user.get("sessions_used_this_month", 0)
     return {
-        "name": user["name"],
+        "name": user.get("name"),
         "plan": user.get("plan", "basic"),
-        "model": config.MODEL_PREMIUM if user.get("plan") == "premium" else config.MODEL_BASIC,
         "has_subscription": subscription_is_active(user.get("subscription_end")),
-        "subscription_end": user.get("subscription_end"),
         "sessions_used": sessions_used,
         "sessions_left": max(0, config.SESSIONS_PER_MONTH - sessions_used),
         "total_questions": user.get("total_questions", 0),
-        "current_session": {
-            "active": user.get("current_session_start") is not None,
-            "started_at": user.get("current_session_start")
-        } if user.get("current_session_start") else None
     }
 
 
 @app.post("/payment/create")
 async def create_payment(request: PaymentRequest):
     user = await db.fetch_one(
-        "SELECT * FROM users WHERE user_api_key = ?",
+        "SELECT * FROM users WHERE user_api_key = %s",
         (request.user_api_key,)
     )
     if not user:
@@ -1062,58 +972,10 @@ async def create_payment(request: PaymentRequest):
     await db.execute(
         """
         INSERT INTO payments (user_id, amount, plan, payment_id, status)
-        VALUES (?, ?, ?, ?, 'pending')
+        VALUES (%s, %s, %s, %s, 'pending')
         """,
         (user["id"], amount, request.plan, internal_payment_id)
     )
-
-    if config.yookassa_enabled():
-        try:
-            auth = base64.b64encode(
-                f"{config.YOOKASSA_SHOP_ID}:{config.YOOKASSA_SECRET_KEY}".encode()
-            ).decode()
-            headers = {
-                "Authorization": f"Basic {auth}",
-                "Idempotence-Key": str(uuid.uuid4()),
-                "Content-Type": "application/json",
-            }
-            payload = {
-                "amount": {"value": str(amount), "currency": "RUB"},
-                "confirmation": {
-                    "type": "redirect",
-                    "return_url": f"{config.BASE_SERVER_URL}/payment/success",
-                },
-                "capture": True,
-                "description": f"Лёня AI Tutor - {request.plan.upper()}",
-                "metadata": {"internal_payment_id": internal_payment_id},
-            }
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(config.YOOKASSA_API_URL, json=payload, headers=headers)
-            if response.status_code != 200:
-                raise HTTPException(400, f"Ошибка YooKassa: {response.text}")
-            data = response.json()
-            confirmation_url = data["confirmation"]["confirmation_url"]
-            await db.execute(
-                """
-                UPDATE payments
-                SET yookassa_id = ?, confirmation_url = ?
-                WHERE payment_id = ?
-                """,
-                (data["id"], confirmation_url, internal_payment_id)
-            )
-            return {
-                "payment_id": internal_payment_id,
-                "amount": amount,
-                "plan": request.plan,
-                "confirmation_url": confirmation_url,
-            }
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(500, f"Ошибка создания платежа: {str(exc)}") from exc
-
-    if not config.ENABLE_TEST_PAYMENTS:
-        raise HTTPException(503, "Тестовые платежи отключены")
 
     test_url = f"{config.BASE_SERVER_URL}/payment/test?payment_id={internal_payment_id}"
     return {
@@ -1125,64 +987,29 @@ async def create_payment(request: PaymentRequest):
     }
 
 
-@app.post("/webhooks/yookassa")
-async def yookassa_webhook(request: Request):
-    try:
-        event_json = await request.json()
-        event_type = event_json.get("event")
-        payment_info = event_json.get("object", {})
-        metadata = payment_info.get("metadata", {})
-        internal_payment_id = metadata.get("internal_payment_id")
-        if not internal_payment_id:
-            return {"status": "error", "message": "No payment id"}
-        if event_type == "payment.succeeded":
-            await activate_payment(internal_payment_id)
-        return {"status": "ok"}
-    except Exception as exc:
-        return {"status": "error", "message": str(exc)}
+@app.get("/payment/test")
+async def test_payment(payment_id: str):
+    payment, activated = await activate_payment(payment_id)
+    if not payment:
+        return render_payment_result("Платёж не найден", "Проверьте ссылку.", "#f44336")
+    if not activated and payment.get("status") == "success":
+        return render_payment_result("Уже активировано", "Этот платёж уже обработан.")
+
+    return render_payment_result(
+        "Тестовая оплата успешна",
+        f"Тариф {payment.get('plan', '').upper()} активирован. Сумма: {payment.get('amount')} RUB.",
+    )
 
 
 @app.get("/payment/success")
 async def payment_success():
-    return render_payment_result(
-        "Оплата прошла успешно",
-        "Подписка активирована на 30 дней. Вернитесь в приложение и обновите статус.",
-    )
-
-
-@app.get("/payment/test")
-async def test_payment(payment_id: str):
-    if not config.ENABLE_TEST_PAYMENTS:
-        raise HTTPException(404, "Not found")
-
-    payment, activated = await activate_payment(payment_id)
-    if not payment:
-        return render_payment_result("Платёж не найден", "Проверьте ссылку и попробуйте снова.", "#f44336")
-    if not activated and payment["status"] == "success":
-        return render_payment_result("Уже активировано", "Этот тестовый платёж уже был обработан.")
-
-    return render_payment_result(
-        "Тестовая оплата успешна",
-        f"Тариф {payment['plan'].upper()} активирован. Сумма: {payment['amount']} RUB.",
-    )
+    return render_payment_result("Оплата прошла успешно", "Подписка активирована на 30 дней.")
 
 
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000"))
-    
     print("\n" + "=" * 70)
-    print("Лёня AI Tutor - Render + Turso Edition")
+    print("Лёня AI Tutor - Render + Supabase")
+    print(f"URL: {config.BASE_SERVER_URL}")
     print("=" * 70)
-    print(f"BASIC:   {config.PRICE_BASIC} RUB/month")
-    print(f"PREMIUM: {config.PRICE_PREMIUM} RUB/month")
-    print(f"Ollama API: {'loaded' if config.OLLAMA_API_KEY else 'missing'}")
-    print(f"Turso: {'enabled' if TURSO_ENABLED else 'disabled'}")
-    print(f"Server: {config.BASE_SERVER_URL}")
-    print("=" * 70)
-    
-    uvicorn.run(
-        app,
-        host="0.0.0.0",
-        port=port,
-        log_level="info",
-    )
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
