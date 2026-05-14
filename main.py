@@ -4,7 +4,6 @@ import hashlib
 import hmac
 import os
 import secrets
-import shutil
 import sqlite3
 import tempfile
 import uuid
@@ -26,20 +25,31 @@ from pydantic import BaseModel, field_validator
 load_dotenv()
 
 # ============================================
-# АДАПТАЦИЯ ДЛЯ RENDER: ПОСТОЯННОЕ ХРАНИЛИЩЕ
+# КОНФИГУРАЦИЯ TURSO (ОБЛАЧНЫЙ SQLITE)
 # ============================================
-RENDER_DATA_DIR = os.getenv("RENDER_DATA_DIR", "/opt/render/project/src/data")
-os.makedirs(RENDER_DATA_DIR, exist_ok=True)
+USE_TURSO = os.getenv("USE_TURSO", "true").lower() in {"1", "true", "yes"}
+TURSO_DB_URL = os.getenv("TURSO_DB_URL", "")
+TURSO_AUTH_TOKEN = os.getenv("TURSO_AUTH_TOKEN", "")
+
+# Импортируем libsql только если используем Turso
+if USE_TURSO and TURSO_DB_URL and TURSO_AUTH_TOKEN:
+    try:
+        import libsql_experimental as libsql
+        TURSO_ENABLED = True
+        print("✅ Turso (libsql) подключён")
+    except ImportError:
+        print("⚠️ libsql_experimental не установлен. Установите: pip install libsql-experimental")
+        TURSO_ENABLED = False
+        USE_TURSO = False
+else:
+    TURSO_ENABLED = False
+    USE_TURSO = False
 
 BASE_DIR = Path(__file__).resolve().parent
-DB_PATH = Path(RENDER_DATA_DIR) / "tutor.db"
 INDEX_PATH = BASE_DIR / "index.html"
 
-# Перенос существующей БД при первом запуске
-OLD_DB_PATH = BASE_DIR / "tutor.db"
-if OLD_DB_PATH.exists() and not DB_PATH.exists():
-    shutil.copy2(OLD_DB_PATH, DB_PATH)
-    print(f"✅ База данных перенесена в {DB_PATH}")
+# Локальный путь к БД (используется если Turso выключен)
+LOCAL_DB_PATH = BASE_DIR / "tutor.db"
 # ============================================
 
 
@@ -104,15 +114,32 @@ class Database:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    @contextmanager
-    def get_connection(self):
-        conn = sqlite3.connect(str(DB_PATH), check_same_thread=False)
+    def _get_turso_connection(self):
+        """Получить соединение с Turso через libsql"""
+        if not TURSO_ENABLED:
+            raise RuntimeError("Turso не настроен")
+        
+        conn = libsql.connect(
+            database=TURSO_DB_URL,
+            auth_token=TURSO_AUTH_TOKEN
+        )
         conn.row_factory = sqlite3.Row
-        # Оптимизации SQLite
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
-        conn.execute("PRAGMA cache_size=-2000")
-        conn.execute("PRAGMA temp_store=MEMORY")
+        return conn
+
+    @contextmanager
+    def get_connection(self):
+        if USE_TURSO and TURSO_ENABLED:
+            conn = self._get_turso_connection()
+        else:
+            conn = sqlite3.connect(str(LOCAL_DB_PATH), check_same_thread=False)
+            conn.row_factory = sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA cache_size=-2000")
+            conn.execute("PRAGMA temp_store=MEMORY")
+        
         try:
             yield conn
             conn.commit()
@@ -140,6 +167,7 @@ class Database:
                 return cursor.fetchall()
 
     async def init(self):
+        """Инициализация таблиц"""
         with self.get_connection() as conn:
             conn.execute(
                 """
@@ -627,9 +655,10 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await db.init()
     await cleanup_old_temp_files()
     print("=" * 70)
-    print("Лёня AI Tutor запущен на Render")
+    print("Лёня AI Tutor запущен на Render + Turso")
     print(f"URL: {config.BASE_SERVER_URL}")
-    print(f"DB: {DB_PATH}")
+    print(f"Turso: {'✅ подключён' if TURSO_ENABLED else '❌ не используется'}")
+    print(f"DB: {'Turso Cloud' if USE_TURSO else LOCAL_DB_PATH}")
     print("=" * 70)
     yield
 
@@ -637,7 +666,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="Лёня AI Tutor",
     description="AI репетитор с голосом, подпиской и лимитами занятий",
-    version="7.2.2-render",
+    version="7.2.3-turso",
     lifespan=lifespan
 )
 
@@ -696,8 +725,8 @@ async def api_info():
         "version": app.version,
         "test_payments_enabled": config.ENABLE_TEST_PAYMENTS,
         "payments_mode": "live" if config.yookassa_enabled() else "test",
-        "hosting": "Render",
-        "db_path": str(DB_PATH),
+        "hosting": "Render + Turso",
+        "turso_enabled": TURSO_ENABLED,
     }
 
 
@@ -708,7 +737,7 @@ async def health():
         return {
             "status": "healthy",
             "database": "connected",
-            "db_path": str(DB_PATH),
+            "turso_enabled": TURSO_ENABLED,
             "timestamp": datetime.utcnow().isoformat(),
             "ollama_configured": bool(config.OLLAMA_API_KEY),
             "payments_mode": "live" if config.yookassa_enabled() else "test",
@@ -1142,15 +1171,13 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000"))
     
     print("\n" + "=" * 70)
-    print("Лёня AI Tutor - Render Edition")
+    print("Лёня AI Tutor - Render + Turso Edition")
     print("=" * 70)
-    print(f"BASIC:   {config.PRICE_BASIC} RUB/month - {config.SESSIONS_PER_MONTH} sessions")
-    print(f"PREMIUM: {config.PRICE_PREMIUM} RUB/month - {config.SESSIONS_PER_MONTH} sessions")
+    print(f"BASIC:   {config.PRICE_BASIC} RUB/month")
+    print(f"PREMIUM: {config.PRICE_PREMIUM} RUB/month")
     print(f"Ollama API: {'loaded' if config.OLLAMA_API_KEY else 'missing'}")
-    print(f"YooKassa: {'live' if config.yookassa_enabled() else 'test'}")
+    print(f"Turso: {'enabled' if TURSO_ENABLED else 'disabled'}")
     print(f"Server: {config.BASE_SERVER_URL}")
-    print(f"Database: {DB_PATH}")
-    print(f"Data dir: {RENDER_DATA_DIR}")
     print("=" * 70)
     
     uvicorn.run(
@@ -1158,7 +1185,4 @@ if __name__ == "__main__":
         host="0.0.0.0",
         port=port,
         log_level="info",
-        limit_concurrency=10,
-        limit_max_requests=1000,
-        timeout_keep_alive=30,
     )
