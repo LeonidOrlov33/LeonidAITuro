@@ -99,7 +99,7 @@ class Database:
 
     def get_connection(self):
         conn = psycopg2.connect(SUPABASE_DB_URL)
-        conn.autocommit = True
+        conn.autocommit = False
         return conn
 
     async def execute(self, query: str, params: tuple = ()):
@@ -107,6 +107,7 @@ class Database:
             with self.get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(query, params)
+                    conn.commit()
                     return cur
 
     async def fetch_one(self, query: str, params: tuple = ()):
@@ -126,6 +127,7 @@ class Database:
                     return [dict(row) for row in results]
 
     async def init(self):
+        """Создание таблиц в PostgreSQL с правильной обработкой транзакций"""
         with self.get_connection() as conn:
             with conn.cursor() as cur:
                 # Таблица users
@@ -144,8 +146,9 @@ class Database:
                         created_at TIMESTAMP DEFAULT NOW()
                     )
                 """)
-
-                # Добавляем колонки если их нет (для миграции)
+                conn.commit()
+                
+                # Добавляем колонки если их нет (каждая в отдельной транзакции)
                 for col, col_type in [
                     ("password_hash", "TEXT"),
                     ("user_api_key", "TEXT"),
@@ -158,9 +161,10 @@ class Database:
                 ]:
                     try:
                         cur.execute(f"ALTER TABLE users ADD COLUMN {col} {col_type}")
+                        conn.commit()
                     except:
-                        pass
-
+                        conn.rollback()
+                
                 # Таблица payments
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS payments (
@@ -176,6 +180,7 @@ class Database:
                         paid_at TEXT
                     )
                 """)
+                conn.commit()
 
                 # Таблица rate_limits
                 cur.execute("""
@@ -186,6 +191,7 @@ class Database:
                         blocked_until TEXT
                     )
                 """)
+                conn.commit()
 
                 # Таблица temp_files
                 cur.execute("""
@@ -195,6 +201,7 @@ class Database:
                         created_at TIMESTAMP DEFAULT NOW()
                     )
                 """)
+                conn.commit()
 
                 # Таблица tts_sessions
                 cur.execute("""
@@ -204,6 +211,7 @@ class Database:
                         created_at TIMESTAMP DEFAULT NOW()
                     )
                 """)
+                conn.commit()
 
 
 db = Database()
@@ -623,7 +631,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="Лёня AI Tutor",
     description="AI репетитор с голосом, подпиской и лимитами занятий",
-    version="7.5.0",
+    version="7.5.1",
     lifespan=lifespan
 )
 
