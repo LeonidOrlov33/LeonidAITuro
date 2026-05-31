@@ -50,17 +50,25 @@ def env_csv(name: str, default: str = "") -> List[str]:
 
 class Config:
     OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "").strip()
+    GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "").strip()
+    OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
     YOOKASSA_SHOP_ID = os.getenv("YOOKASSA_SHOP_ID", "").strip()
     YOOKASSA_SECRET_KEY = os.getenv("YOOKASSA_SECRET_KEY", "").strip()
     BASE_SERVER_URL = os.getenv("BASE_SERVER_URL", "http://127.0.0.1:8000").rstrip("/")
     YOOKASSA_API_URL = "https://api.yookassa.ru/v3/payments"
     OLLAMA_DIRECT_API_URL = os.getenv("OLLAMA_DIRECT_API_URL", "https://ollama.com/api/chat")
+    OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
+    GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 
     MODEL_BASIC = os.getenv("MODEL_BASIC", "gpt-oss:120b-cloud")
     MODEL_PREMIUM = os.getenv("MODEL_PREMIUM", "deepseek-v3.1:671b-cloud")
+    MODEL_GEMINI = os.getenv("MODEL_GEMINI", "gemini-2.0-flash-exp")
+    MODEL_LIGHT = os.getenv("MODEL_LIGHT", "meta-llama/llama-3.2-3b-instruct:free")
 
     PRICE_BASIC = int(os.getenv("PRICE_BASIC", "300"))
     PRICE_PREMIUM = int(os.getenv("PRICE_PREMIUM", "500"))
+    PRICE_GEMINI = int(os.getenv("PRICE_GEMINI", "1500"))
+    PRICE_LIGHT = int(os.getenv("PRICE_LIGHT", "0"))
     SESSIONS_PER_MONTH = int(os.getenv("SESSIONS_PER_MONTH", "5"))
     SESSION_DURATION_MINUTES = int(os.getenv("SESSION_DURATION_MINUTES", "120"))
     MAX_CHAT_MESSAGES = int(os.getenv("MAX_CHAT_MESSAGES", "20"))
@@ -75,10 +83,8 @@ class Config:
 
     @classmethod
     def yookassa_enabled(cls) -> bool:
-        """Проверяем, что указаны РЕАЛЬНЫЕ ключи YooKassa"""
         if not cls.YOOKASSA_SHOP_ID or not cls.YOOKASSA_SECRET_KEY:
             return False
-        # Проверяем, что это не тестовые заглушки
         fake_ids = ("test_shop", "ваш_shop_id", "shop_id", "")
         fake_keys = ("test_secret", "ваш_secret_key", "secret_key", "")
         if cls.YOOKASSA_SHOP_ID.lower() in fake_ids:
@@ -130,10 +136,8 @@ class Database:
                     return [dict(row) for row in results]
 
     async def init(self):
-        """Создание таблиц в PostgreSQL с правильной обработкой транзакций"""
         with self.get_connection() as conn:
             with conn.cursor() as cur:
-                # Таблица users
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS users (
                         id SERIAL PRIMARY KEY,
@@ -151,7 +155,6 @@ class Database:
                 """)
                 conn.commit()
                 
-                # Добавляем колонки если их нет
                 for col, col_type in [
                     ("password_hash", "TEXT"),
                     ("user_api_key", "TEXT"),
@@ -168,7 +171,6 @@ class Database:
                     except:
                         conn.rollback()
                 
-                # Таблица payments
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS payments (
                         id SERIAL PRIMARY KEY,
@@ -185,7 +187,6 @@ class Database:
                 """)
                 conn.commit()
 
-                # Таблица rate_limits
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS rate_limits (
                         ip TEXT PRIMARY KEY,
@@ -196,7 +197,6 @@ class Database:
                 """)
                 conn.commit()
 
-                # Таблица temp_files
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS temp_files (
                         id SERIAL PRIMARY KEY,
@@ -206,7 +206,6 @@ class Database:
                 """)
                 conn.commit()
 
-                # Таблица tts_sessions
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS tts_sessions (
                         id TEXT PRIMARY KEY,
@@ -238,8 +237,8 @@ class RegisterRequest(BaseModel):
     @field_validator("plan")
     @classmethod
     def validate_plan(cls, value):
-        if value not in {"basic", "premium"}:
-            raise ValueError("Неверный тариф")
+        if value not in {"basic", "premium", "gemini", "light"}:
+            raise ValueError("Неверный тариф. Доступны: basic, premium, gemini, light")
         return value
 
     @field_validator("password")
@@ -305,8 +304,8 @@ class PaymentRequest(BaseModel):
     @field_validator("plan")
     @classmethod
     def validate_payment_plan(cls, value):
-        if value not in {"basic", "premium"}:
-            raise ValueError("Неверный тариф")
+        if value not in {"basic", "premium", "gemini", "light"}:
+            raise ValueError("Неверный тариф. Доступны: basic, premium, gemini, light")
         return value
 
 
@@ -586,9 +585,15 @@ async def activate_payment(payment_id: str):
     return updated_payment, True
 
 
-def resolve_ollama_model(plan: str | None) -> str:
-    model = config.MODEL_PREMIUM if plan == "premium" else config.MODEL_BASIC
-    return model.removesuffix("-cloud")
+def resolve_ai_model(plan: str | None) -> tuple[str, str]:
+    if plan == "gemini":
+        return config.MODEL_GEMINI, "google"
+    elif plan == "light":
+        return config.MODEL_LIGHT, "openrouter"
+    elif plan == "premium":
+        return config.MODEL_PREMIUM.removesuffix("-cloud"), "ollama"
+    else:
+        return config.MODEL_BASIC.removesuffix("-cloud"), "ollama"
 
 
 def build_ai_unavailable_response(message: str, model: str, user: dict) -> dict:
@@ -618,6 +623,139 @@ async def send_ollama_chat(model: str, messages: list) -> dict:
     return response.json()
 
 
+async def send_gemini_chat(model: str, messages: list) -> dict:
+    if not config.GOOGLE_API_KEY:
+        raise HTTPException(502, "Google API key not configured")
+    
+    gemini_messages = []
+    system_instruction = None
+    
+    for msg in messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        
+        if role == "system":
+            system_instruction = content
+        elif role == "user":
+            gemini_messages.append({
+                "role": "user",
+                "parts": [{"text": content}]
+            })
+        elif role == "assistant":
+            gemini_messages.append({
+                "role": "model",
+                "parts": [{"text": content}]
+            })
+    
+    url = f"{config.GEMINI_API_URL}/{model}:generateContent?key={config.GOOGLE_API_KEY}"
+    
+    payload = {
+        "contents": gemini_messages,
+        "generationConfig": {
+            "temperature": 0.7,
+            "maxOutputTokens": 4096,
+            "topP": 0.95,
+            "topK": 40
+        }
+    }
+    
+    if system_instruction:
+        payload["systemInstruction"] = {
+            "parts": [{"text": system_instruction}]
+        }
+    
+    headers = {"Content-Type": "application/json"}
+    
+    async with httpx.AsyncClient(timeout=90.0) as client:
+        response = await client.post(url, json=payload, headers=headers)
+    
+    if response.status_code != 200:
+        detail = response.text[:500]
+        if response.status_code == 404 and model == config.MODEL_GEMINI:
+            print(f"Gemini model {model} not found, trying gemini-1.5-flash")
+            return await send_gemini_chat("gemini-1.5-flash", messages)
+        raise HTTPException(502, f"Gemini API error {response.status_code}: {detail}")
+    
+    data = response.json()
+    
+    candidates = data.get("candidates", [])
+    if not candidates:
+        raise HTTPException(502, "No response from Gemini")
+    
+    content_parts = candidates[0].get("content", {}).get("parts", [])
+    response_text = ""
+    for part in content_parts:
+        if "text" in part:
+            response_text += part["text"]
+    
+    return {
+        "message": {
+            "content": response_text,
+            "role": "assistant"
+        },
+        "model": model,
+        "usage": data.get("usageMetadata", {})
+    }
+
+
+async def send_openrouter_chat(model: str, messages: list) -> dict:
+    headers = {
+        "HTTP-Referer": config.BASE_SERVER_URL,
+        "X-Title": "Lenya AI Tutor",
+        "Content-Type": "application/json"
+    }
+    
+    if config.OPENROUTER_API_KEY:
+        headers["Authorization"] = f"Bearer {config.OPENROUTER_API_KEY}"
+    
+    openrouter_messages = []
+    for msg in messages:
+        openrouter_messages.append({
+            "role": msg.get("role", "user"),
+            "content": msg.get("content", "")
+        })
+    
+    payload = {
+        "model": model,
+        "messages": openrouter_messages,
+        "max_tokens": 2048,
+        "temperature": 0.7,
+        "stream": False
+    }
+    
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.post(
+            config.OPENROUTER_API_URL,
+            json=payload,
+            headers=headers
+        )
+    
+    if response.status_code == 429:
+        raise HTTPException(429, "OpenRouter free limit reached. Try again later.")
+    
+    if response.status_code != 200:
+        detail = response.text[:500]
+        raise HTTPException(502, f"OpenRouter API error {response.status_code}: {detail}")
+    
+    data = response.json()
+    
+    choices = data.get("choices", [])
+    if not choices:
+        raise HTTPException(502, "No response from OpenRouter")
+    
+    message = choices[0].get("message", {})
+    content = message.get("content", "")
+    
+    return {
+        "message": {
+            "content": content,
+            "role": "assistant"
+        },
+        "model": data.get("model", model),
+        "usage": data.get("usage", {})
+    }
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     await db.init()
@@ -626,6 +764,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     print("Лёня AI Tutor - Render + Supabase")
     print(f"URL: {config.BASE_SERVER_URL}")
     print(f"BASIC: {config.PRICE_BASIC} RUB | PREMIUM: {config.PRICE_PREMIUM} RUB")
+    print(f"GEMINI: {config.PRICE_GEMINI} RUB | LIGHT: FREE")
     print(f"Сессий: {config.SESSIONS_PER_MONTH} | Длительность: {config.SESSION_DURATION_MINUTES} мин")
     print("=" * 70)
     yield
@@ -634,7 +773,7 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(
     title="Лёня AI Tutor",
     description="AI репетитор с голосом, подпиской и лимитами занятий",
-    version="7.5.2",
+    version="8.0.0",
     lifespan=lifespan
 )
 
@@ -702,6 +841,8 @@ async def health():
             "database": "Supabase (PostgreSQL)",
             "timestamp": datetime.utcnow().isoformat(),
             "ollama_configured": bool(config.OLLAMA_API_KEY),
+            "gemini_configured": bool(config.GOOGLE_API_KEY),
+            "openrouter_configured": True,
         }
     except Exception as e:
         return {"status": "degraded", "database": str(e)}
@@ -846,8 +987,15 @@ async def session_status(user: dict = Depends(verify_user)):
 
 @app.post("/chat")
 async def chat(request: ChatRequest, req: Request, user: dict = Depends(verify_active_session)):
-    if not config.OLLAMA_API_KEY:
-        return build_ai_unavailable_response("Сервис ИИ пока не настроен.", "unconfigured", user)
+    model, provider = resolve_ai_model(user.get("plan"))
+    
+    if provider == "google" and not config.GOOGLE_API_KEY:
+        return build_ai_unavailable_response("Google Gemini не настроен.", model, user)
+    elif provider == "openrouter" and not config.OPENROUTER_API_KEY:
+        # OpenRouter может работать без ключа для бесплатных моделей
+        pass
+    elif provider == "ollama" and not config.OLLAMA_API_KEY:
+        return build_ai_unavailable_response("Ollama Cloud не настроен.", "unconfigured", user)
 
     if request.tts_id and request.tts_id.strip():
         tts_session = await db.fetch_one("SELECT * FROM tts_sessions WHERE id = %s", (request.tts_id,))
@@ -856,10 +1004,15 @@ async def chat(request: ChatRequest, req: Request, user: dict = Depends(verify_a
 
     ip = SecurityUtils.get_client_ip(req)
     await RateLimiter.check_and_update(ip)
-    model = resolve_ollama_model(user.get("plan"))
 
     try:
-        data = await send_ollama_chat(model, request.messages)
+        if provider == "google":
+            data = await send_gemini_chat(model, request.messages)
+        elif provider == "openrouter":
+            data = await send_openrouter_chat(model, request.messages)
+        else:
+            data = await send_ollama_chat(model, request.messages)
+        
         await db.execute(
             "UPDATE users SET total_questions = total_questions + 1 WHERE id = %s",
             (user["id"],)
@@ -875,13 +1028,14 @@ async def chat(request: ChatRequest, req: Request, user: dict = Depends(verify_a
         return {
             "response": data.get("message", {}).get("content", "Не удалось получить ответ"),
             "remaining_minutes": remaining,
-            "model_used": model,
+            "model_used": data.get("model", model),
             "tts_id": tts_id,
         }
     except HTTPException:
         raise
     except httpx.HTTPError:
-        return build_ai_unavailable_response("Не удалось связаться с Ollama Cloud.", model, user)
+        provider_names = {"google": "Google Gemini", "openrouter": "OpenRouter", "ollama": "Ollama Cloud"}
+        return build_ai_unavailable_response(f"Не удалось связаться с {provider_names.get(provider, 'AI')}.", model, user)
     except Exception as exc:
         raise HTTPException(500, f"Internal chat error: {str(exc)}") from exc
 
@@ -942,10 +1096,21 @@ async def get_status(user: dict = Depends(verify_user)):
     user_row = await db.fetch_one("SELECT * FROM users WHERE id = %s", (user["id"],))
     user = dict(user_row) if user_row else {}
     sessions_used = user.get("sessions_used_this_month", 0)
+    
+    plan = user.get("plan", "basic")
+    model_info = {
+        "basic": (config.MODEL_BASIC, "Ollama Cloud"),
+        "premium": (config.MODEL_PREMIUM, "Ollama Cloud"),
+        "gemini": (config.MODEL_GEMINI, "Google AI"),
+        "light": (config.MODEL_LIGHT, "OpenRouter (Free)")
+    }
+    model_name, provider = model_info.get(plan, (config.MODEL_BASIC, "Ollama Cloud"))
+    
     return {
         "name": user.get("name"),
-        "plan": user.get("plan", "basic"),
-        "model": config.MODEL_PREMIUM if user.get("plan") == "premium" else config.MODEL_BASIC,
+        "plan": plan,
+        "model": model_name,
+        "provider": provider,
         "has_subscription": subscription_is_active(user.get("subscription_end")),
         "subscription_end": user.get("subscription_end"),
         "sessions_used": sessions_used,
@@ -964,14 +1129,57 @@ async def create_payment(request: PaymentRequest):
     if not user:
         raise HTTPException(401, "Неверный API ключ")
 
-    amount = config.PRICE_BASIC if request.plan == "basic" else config.PRICE_PREMIUM
+    prices = {
+        "basic": config.PRICE_BASIC,
+        "premium": config.PRICE_PREMIUM,
+        "gemini": config.PRICE_GEMINI,
+        "light": config.PRICE_LIGHT
+    }
+    amount = prices.get(request.plan, config.PRICE_BASIC)
+    
+    plan_names = {
+        "basic": "Basic (GPT OSS 120B)",
+        "premium": "Premium (DeepSeek V3.1)",
+        "gemini": "Gemini Flash (Google AI)",
+        "light": "Light (Free)"
+    }
+    
+    # Бесплатный тариф - сразу активируем
+    if amount == 0:
+        internal_payment_id = f"lenya_free_{uuid.uuid4().hex[:12]}"
+        await db.execute(
+            "INSERT INTO payments (user_id, amount, plan, payment_id, status) VALUES (%s, %s, %s, %s, 'success')",
+            (user["id"], 0, request.plan, internal_payment_id)
+        )
+        
+        subscription_end = (datetime.utcnow() + timedelta(days=30)).isoformat()
+        current_month = datetime.utcnow().strftime("%Y-%m")
+        
+        await db.execute(
+            """
+            UPDATE users
+            SET plan = %s, subscription_end = %s, sessions_used_this_month = 0,
+                last_session_month = %s, current_session_start = NULL
+            WHERE id = %s
+            """,
+            (request.plan, subscription_end, current_month, user["id"])
+        )
+        
+        return {
+            "payment_id": internal_payment_id,
+            "amount": 0,
+            "plan": request.plan,
+            "plan_name": "Light (Free)",
+            "message": "Бесплатный тариф активирован!",
+            "free": True
+        }
+    
     internal_payment_id = f"lenya_{uuid.uuid4().hex[:12]}"
     await db.execute(
         "INSERT INTO payments (user_id, amount, plan, payment_id, status) VALUES (%s, %s, %s, %s, 'pending')",
         (user["id"], amount, request.plan, internal_payment_id)
     )
 
-    # Пробуем реальную YooKassa только если есть настоящие ключи
     if config.yookassa_enabled():
         try:
             auth = base64.b64encode(
@@ -989,7 +1197,7 @@ async def create_payment(request: PaymentRequest):
                     "return_url": f"{config.BASE_SERVER_URL}/payment/success",
                 },
                 "capture": True,
-                "description": f"Лёня AI Tutor - {request.plan.upper()}",
+                "description": f"Лёня AI Tutor - {plan_names.get(request.plan, request.plan)}",
                 "metadata": {"internal_payment_id": internal_payment_id},
             }
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -1005,17 +1213,18 @@ async def create_payment(request: PaymentRequest):
                     "payment_id": internal_payment_id,
                     "amount": amount,
                     "plan": request.plan,
+                    "plan_name": plan_names.get(request.plan, request.plan),
                     "confirmation_url": confirmation_url,
                 }
         except Exception:
-            pass  # Если YooKassa не сработала — используем тестовый режим
+            pass
 
-    # Тестовый режим (по умолчанию)
     test_url = f"{config.BASE_SERVER_URL}/payment/test?payment_id={internal_payment_id}"
     return {
         "payment_id": internal_payment_id,
         "amount": amount,
         "plan": request.plan,
+        "plan_name": plan_names.get(request.plan, request.plan),
         "confirmation_url": test_url,
         "test_mode": True,
     }
