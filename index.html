@@ -21,6 +21,7 @@
       --danger: #ff7373;
       --warning: #ffc65b;
       --premium: #f8d66d;
+      --free: #4caf50;
       --shadow: 0 24px 60px rgba(3, 8, 15, 0.38);
     }
 
@@ -180,6 +181,16 @@
       border-color: rgba(112, 224, 162, 0.78);
       background: rgba(112, 224, 162, 0.12);
       transform: translateY(-2px);
+    }
+
+    .radio-group label.free-plan {
+      border-color: var(--free);
+      background: rgba(76, 175, 80, 0.1);
+    }
+
+    .radio-group label.free-plan.selected {
+      border-color: var(--free);
+      background: rgba(76, 175, 80, 0.2);
     }
 
     .radio-group label:hover,
@@ -440,6 +451,11 @@
       color: #fff0b0;
     }
 
+    .badge-free {
+      background: rgba(76, 175, 80, 0.20);
+      color: #a5d6a7;
+    }
+
     .chat-window {
       height: 420px;
       overflow-y: auto;
@@ -627,6 +643,17 @@
       background: rgba(248, 214, 109, 0.10);
     }
 
+    .plan-card.free {
+      border-color: var(--free);
+      background: rgba(76, 175, 80, 0.08);
+    }
+
+    .plan-card.free.selected {
+      border-color: var(--free);
+      background: rgba(76, 175, 80, 0.15);
+      box-shadow: 0 8px 24px rgba(76, 175, 80, 0.2);
+    }
+
     .price {
       font-size: clamp(34px, 6vw, 46px);
       font-weight: 800;
@@ -638,6 +665,10 @@
       font-size: 16px;
       color: var(--muted);
       font-weight: 600;
+    }
+
+    .price.free-price {
+      color: var(--free);
     }
 
     .plan-list {
@@ -702,7 +733,7 @@
       <div class="eyebrow">🎧 Голосовой репетитор с подпиской и живыми занятиями</div>
       <h1 class="hero-title">Лёня помогает учиться без скучной зубрёшки</h1>
       <p class="hero-copy">
-        5 полноценных занятий в месяц, таймер живой сессии, голосовой режим и тарифы под разную глубину ответов.
+        5 полноценных занятий в месяц, таймер живой сессии, голосовой режим и 4 тарифа на выбор.
       </p>
 
       <input id="regName" class="input-field" placeholder="Как тебя зовут?" maxlength="30">
@@ -713,12 +744,22 @@
         <label id="planBasicLabel" class="selected">
           <input type="radio" name="plan" value="basic" checked>
           <span class="option-title">💎 Basic — 300 ₽</span>
-          <span class="option-copy">GPT OSS 120B, 5 занятий по 2 часа</span>
+          <span class="option-copy">GPT OSS 120B через Ollama</span>
         </label>
         <label id="planPremiumLabel">
           <input type="radio" name="plan" value="premium">
           <span class="option-title">👑 Premium — 500 ₽</span>
-          <span class="option-copy">DeepSeek V3.1, 5 занятий по 2 часа</span>
+          <span class="option-copy">DeepSeek V3.1 через Ollama</span>
+        </label>
+        <label id="planGeminiLabel">
+          <input type="radio" name="plan" value="gemini">
+          <span class="option-title">🌟 Gemini Flash — 1 500 ₽</span>
+          <span class="option-copy">Google Gemini (прямой API)</span>
+        </label>
+        <label id="planLightLabel" class="free-plan">
+          <input type="radio" name="plan" value="light">
+          <span class="option-title">⚡ Light — БЕСПЛАТНО</span>
+          <span class="option-copy">Легкая модель через OpenRouter</span>
         </label>
       </div>
 
@@ -766,7 +807,7 @@
             <div class="chat-window" id="chatWindow">
               <div class="message bot-msg">
                 <strong>🤖 Лёня:</strong>
-                <div style="margin-top: 8px;">Привет! Оплатите подписку и нажмите «Начать занятие», чтобы включить голосовой режим.</div>
+                <div style="margin-top: 8px;">Привет! Выберите тариф, оплатите подписку и нажмите «Начать занятие», чтобы включить голосовой режим.</div>
               </div>
             </div>
           </div>
@@ -775,7 +816,7 @@
             <div>
               <button id="startSessionBtn" class="start-session-btn" onclick="startSession()">🎯 Начать занятие</button>
               <button id="voiceBtn" class="voice-btn" onclick="toggleVoiceInput()" disabled>🎤</button>
-              <div id="statusText" class="voice-hint">⚠️ Сначала оплатите подписку</div>
+              <div id="statusText" class="voice-hint">⚠️ Сначала оплатите подписку или выберите бесплатный тариф</div>
 
               <div class="composer">
                 <textarea id="manualInput" placeholder="Можно писать сюда вручную, если не хочется говорить или микрофон капризничает." disabled></textarea>
@@ -815,12 +856,12 @@
               <div class="price">300 <small>₽ / месяц</small></div>
               <ul class="plan-list">
                 <li>✅ 5 занятий по 2 часа</li>
+                <li>✅ Ollama Cloud</li>
                 <li>✅ Серверный TTS-голос</li>
-                <li>✅ Подходит для регулярной практики</li>
               </ul>
             </div>
 
-            <div class="plan-card premium" onclick="selectPlan('premium')" id="planPremiumCard" style="margin-top:18px;">
+            <div class="plan-card" onclick="selectPlan('premium')" id="planPremiumCard" style="margin-top:18px;">
               <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap;">
                 <h3>👑 Premium</h3>
                 <span class="badge badge-premium">DeepSeek V3.1</span>
@@ -828,13 +869,43 @@
               <div class="price">500 <small>₽ / месяц</small></div>
               <ul class="plan-list">
                 <li>✅ 5 занятий по 2 часа</li>
-                <li>✅ Более сильная модель для сложных тем</li>
+                <li>✅ Ollama Cloud</li>
+                <li>✅ Мощнее для сложных тем</li>
                 <li>✅ Серверный TTS-голос</li>
               </ul>
             </div>
 
+            <div class="plan-card" onclick="selectPlan('gemini')" id="planGeminiCard" style="margin-top:18px;">
+              <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap;">
+                <h3>🌟 Gemini Flash</h3>
+                <span class="badge badge-premium">Google AI</span>
+              </div>
+              <div class="price">1 500 <small>₽ / месяц</small></div>
+              <ul class="plan-list">
+                <li>✅ 5 занятий по 2 часа</li>
+                <li>✅ Google Gemini API</li>
+                <li>✅ Прямое подключение</li>
+                <li>✅ Серверный TTS-голос</li>
+              </ul>
+            </div>
+
+            <div class="plan-card free" onclick="selectPlan('light')" id="planLightCard" style="margin-top:18px;">
+              <div style="display:flex; justify-content:space-between; gap:12px; align-items:flex-start; flex-wrap:wrap;">
+                <h3>⚡ Light - БЕСПЛАТНО</h3>
+                <span class="badge badge-free">FREE</span>
+              </div>
+              <div class="price free-price">0 <small>₽ / месяц</small></div>
+              <ul class="plan-list">
+                <li>✅ 5 занятий по 2 часа</li>
+                <li>✅ Легкая модель OpenRouter</li>
+                <li>✅ Мгновенные ответы</li>
+                <li>✅ Серверный TTS-голос</li>
+                <li>🎁 Полностью бесплатно!</li>
+              </ul>
+            </div>
+
             <button id="payButton" class="btn" style="margin-top:20px;" onclick="createPayment()">💳 Оплатить подписку</button>
-            <p class="payment-note">После оплаты статус обновится автоматически. Если вы в тестовом режиме, страница активации откроется в новой вкладке.</p>
+            <p class="payment-note">Light тариф активируется мгновенно и бесплатно. Для остальных тарифов требуется оплата.</p>
           </div>
         </div>
       </div>
@@ -869,7 +940,6 @@
       sessionTimer: null,
       currentAudio: null,
       paymentPollTimer: null,
-      // Новые поля для управления TTS
       currentTtsId: null,
       isTtsPlaying: false,
       pendingRequest: null,
@@ -939,7 +1009,13 @@
 
     function setPlanBadge(plan) {
       const badge = document.getElementById("userPlanBadge");
-      badge.className = `badge ${plan === "premium" ? "badge-premium" : "badge-success"}`;
+      if (plan === "light") {
+        badge.className = "badge badge-free";
+      } else if (plan === "premium" || plan === "gemini") {
+        badge.className = "badge badge-premium";
+      } else {
+        badge.className = "badge badge-success";
+      }
       badge.textContent = plan.toUpperCase();
     }
 
@@ -1055,7 +1131,6 @@
     async function playVoiceResponse(text, ttsId = null) {
       if (!text) return;
 
-      // Если уже воспроизводится TTS, добавляем в очередь
       if (state.isTtsPlaying && state.currentAudio) {
         state.pendingTtsQueue.push({ text, ttsId });
         return;
@@ -1099,17 +1174,14 @@
 
           await markTtsComplete(responseTtsId);
 
-          // Разблокируем управление
           setControlsEnabled(true);
           setVoiceButtonState("idle");
           setStatusText("✅ Можно задать следующий вопрос");
 
-          // Обрабатываем следующий TTS в очереди
           if (state.pendingTtsQueue.length > 0) {
             const nextTts = state.pendingTtsQueue.shift();
             await playTtsInternal(nextTts.text, nextTts.ttsId);
           } else if (state.pendingRequest) {
-            // Обрабатываем отложенный запрос
             const pendingText = state.pendingRequest;
             state.pendingRequest = null;
             await processAIRequest(pendingText);
@@ -1133,7 +1205,6 @@
       } catch (error) {
         console.error("TTS error:", error);
         
-        // Fallback на браузерный TTS
         const utterance = new SpeechSynthesisUtterance(text);
         utterance.lang = "ru-RU";
         
@@ -1420,7 +1491,7 @@
           setControlsEnabled(false);
           document.getElementById("timerDisplay").textContent = "--:--";
           document.getElementById("sessionProgress").style.width = "0%";
-          setStatusText("⚠️ Сначала оплатите подписку");
+          setStatusText("⚠️ Сначала оплатите подписку или выберите бесплатный тариф");
         }
 
         return data;
@@ -1475,7 +1546,11 @@
         await checkSessionStatus();
 
         if (!data.has_subscription) {
-          addMessage("💳 Выберите тариф и оплатите подписку, чтобы начать занятие.", false);
+          if (plan === "light") {
+            addMessage("💡 Бесплатный тариф Light. Можете сразу активировать подписку в разделе Оплата.", false);
+          } else {
+            addMessage("💳 Выберите тариф и оплатите подписку, чтобы начать занятие.", false);
+          }
           showScreen(2);
         }
       } catch (error) {
@@ -1520,7 +1595,18 @@
     function selectPlan(plan) {
       state.selectedPlan = plan;
       document.querySelectorAll(".plan-card").forEach((card) => card.classList.remove("selected"));
-      document.getElementById(plan === "basic" ? "planBasic" : "planPremiumCard").classList.add("selected");
+      
+      const planMap = {
+        "basic": "planBasic",
+        "premium": "planPremiumCard",
+        "gemini": "planGeminiCard",
+        "light": "planLightCard"
+      };
+      
+      const cardId = planMap[plan];
+      if (cardId) {
+        document.getElementById(cardId).classList.add("selected");
+      }
     }
 
     async function pollPaymentStatus() {
@@ -1549,6 +1635,37 @@
       const button = document.getElementById("payButton");
       if (!state.userApiKey) {
         alert("Сначала войдите в аккаунт.");
+        return;
+      }
+
+      // Бесплатный тариф
+      if (state.selectedPlan === "light") {
+        button.disabled = true;
+        button.textContent = "⏳ Активация...";
+        
+        try {
+          const data = await apiFetch("/payment/create", {
+            method: "POST",
+            body: JSON.stringify({
+              user_api_key: state.userApiKey,
+              plan: "light"
+            })
+          });
+          
+          if (data.free) {
+            addMessage("🎉 Бесплатный тариф Light активирован! Можно начинать занятие.", false);
+            alert("Бесплатный тариф активирован! Добро пожаловать!");
+            await checkSessionStatus();
+            showScreen(0);
+            return;
+          }
+        } catch (error) {
+          console.error("Free activation error:", error);
+          alert("❌ Не удалось активировать бесплатный тариф");
+        } finally {
+          button.disabled = false;
+          button.textContent = "💳 Оплатить подписку";
+        }
         return;
       }
 
@@ -1617,6 +1734,7 @@
           <p><strong>👤 Имя:</strong> ${escapeHtml(data.name)}</p>
           <p><strong>💎 Тариф:</strong> ${escapeHtml(data.plan.toUpperCase())}</p>
           <p><strong>🤖 Модель:</strong> ${escapeHtml(data.model)}</p>
+          <p><strong>☁️ Провайдер:</strong> ${escapeHtml(data.provider)}</p>
           <p><strong>📅 Подписка:</strong> ${subscriptionHtml}</p>
           <p><strong>📊 Занятий:</strong> ${escapeHtml(data.sessions_used)}/${escapeHtml(data.sessions_used + data.sessions_left)}</p>
           <p><strong>💬 Всего вопросов:</strong> ${escapeHtml(data.total_questions)}</p>
@@ -1664,13 +1782,17 @@
       selectPlan("basic");
       syncMicButton();
       if (!state.supportsSpeechRecognition) {
-        setStatusText("Этот браузер не поддерживает распознавание речи. Используйте текстовую панель или обычный Chrome/Edge по http://127.0.0.1:8000/.");
+        setStatusText("Этот браузер не поддерживает распознавание речи. Используйте текстовую панель или обычный Chrome/Edge.");
       }
 
       document.querySelectorAll('input[name="plan"]').forEach((radio) => {
         radio.addEventListener("change", (event) => {
           document.querySelectorAll(".radio-group label").forEach((label) => label.classList.remove("selected"));
-          event.target.closest("label").classList.add("selected");
+          const label = event.target.closest("label");
+          label.classList.add("selected");
+          if (event.target.value === "light") {
+            label.classList.add("free-plan");
+          }
         });
       });
 
